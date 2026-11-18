@@ -2851,7 +2851,22 @@ def _verdict_help(width: int = 98) -> str:
         + either(sorted(rc.REFUTE_ONLY | rc.CORRECTION_ONLY))
         + ", with its detail unless it is faithful. See \"What a verdict means\" in "
         "docs/REVIEWING.md.", width)]
-    return "\n".join(out)
+    return "\n".join(out + _difficult_help(width))
+
+
+def _difficult_help(width: int) -> list[str]:
+    """`review decide --help`'s lines naming the examples for cases where a verdict is easy to get
+    wrong (`data/review_examples.json`, which the review page shows at step 2), and where their
+    worked versions are."""
+    import textwrap
+    from importlib.resources import files
+    cases = json.loads(files("prooflens").joinpath("data/review_examples.json")
+                       .read_text(encoding="utf-8"))
+    out = ["", *textwrap.wrap(f"Difficult cases, worked in {cases['guide']} (optional reading; "
+                              "they add no field):", width)]
+    for ex in cases["examples"]:
+        out += textwrap.wrap(ex["title"], width, initial_indent="  - ", subsequent_indent="    ")
+    return out
 
 
 def _decide_options(sp) -> None:

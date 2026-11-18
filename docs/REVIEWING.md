@@ -917,7 +917,8 @@ The comparison says how the Lean compares with the paper, item by item; the deta
 verdict itself needs. Every verdict needs a detail except *Faithful* and *Faithful to the
 correction*, and `decide` refuses one without it. The review page asks for it under the verdict,
 and `machinechecked review decide --help` lists each verdict with the same question (`--detail`,
-or `detail` in a manifest).
+or `detail` in a manifest). For a definition, and for other cases where a verdict is easy to get
+wrong, see [Difficult cases](#difficult-cases).
 
 A saved report carries an issue draft for the maintainer: an explanatory note for representation
 choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
@@ -956,6 +957,79 @@ A review of a proof step records whether the step holds, and no coverage. Covera
 change no status, and promotion writes the same marker with them or without them.
 
 A review can start before a theorem is proved, once its formal statement exists. The queue lists the claims that still await one.
+
+## Difficult cases
+
+These examples cover cases where a verdict is easy to get wrong. Each says what to compare, and
+uses the verdicts and coverage above: write what you find in the comparison (in an investigation,
+as a finding). They add no verdict, field or required answer. The review page lists them at step
+2 under **Difficult cases**, and `review decide --help` names them.
+
+### A definition: the objects it admits
+
+A synthetic paper defines
+
+> **Definition 2.** A *control* is a measurable function u : [0, T] → ℝ.
+
+and later states *Corollary 5. For every control u of linear growth, …*. Compare the objects each
+side admits, not only the words:
+
+| Lean | Objects it admits | Verdict and detail | Coverage of the definition |
+|---|---|---|---|
+| `{u : Set.Icc 0 T → ℝ // Measurable u}` | the paper's | *Faithful* | `full`, although a theorem that uses controls also uses a cost and a dynamics, each a unit of its own |
+| `Set.Icc 0 T → ℝ` | more: functions that are not measurable | *Broader*: restricting to measurable functions gives the paper's | `partial`: say that measurability is missing |
+| `{u : Set.Icc 0 T → ℝ // Measurable u ∧ ∃ C, ∀ t, abs (u t) ≤ C * (1 + t)}` | fewer: no control of faster growth | *Narrower*: the growth bound is Corollary 5's hypothesis, not part of Definition 2 | `partial`: say which controls are excluded |
+
+The coverage is of the definition itself: a complete definition of one ingredient covers its unit
+in full, whatever else the theorems using it need. Whether a difference matters to a theorem is
+for that theorem's review, which reads the definitions it uses: a theorem for every control is
+stronger over the broader type, one that asserts a control exists is weaker.
+
+### A value outside the intended domain
+
+The paper defines g(t) = f(t)/t for t in (0, T]; the Lean defines `g (t : ℝ) : ℝ := f t / t`,
+which also gives g 0 = 0, since Lean's x / 0 is 0. That is *Faithful with representation
+choices* only with a detail that says why the value at 0 never matters where the paper uses g,
+for example that every statement using g evaluates it at t > 0. When a statement reads g at 0 (a
+supremum over [0, T], continuity on [0, T]), the extra value enters it: record *Mismatched*, with
+what the Lean states instead, or *Cannot determine*, with the open question.
+
+### A supremum or infimum of an empty or unbounded set
+
+Lean gives every set of reals a supremum and an infimum: on ℝ, `sSup ∅ = 0`, and the supremum
+of a set not bounded above is 0 as well (likewise `sInf`). An indexed supremum `⨆ t ∈ s, f t` is
+`⨆ t, ⨆ (_ : t ∈ s), f t`, whose inner supremum has an empty index for every t outside s, so on
+ℝ it counts 0 there: `⨆ t ∈ Set.Icc 0 1, (-1 : ℝ)` is 0, not −1. A bound
+`⨆ t ∈ Set.Icc 0 T, |X t| ≤ C` therefore holds for every C ≥ 0 when X is unbounded on [0, T],
+where the paper's supremum is infinite. In `ℝ≥0∞` every set has its least upper bound, possibly
+`⊤`, and `sInf ∅ = ⊤`. Check the value on the type the Lean uses, in the case the paper excludes:
+a bound that holds there only because the supremum is 0 does not state the paper's (*Mismatched*),
+unless a hypothesis of the Lean rules that case out.
+
+### Hypotheses that must hold together
+
+`∀ x, P x → Q x → R x` says nothing when no x meets both P and Q, even if each can be met. A
+witness exhibiting one x that meets both shows that the hypotheses hold together; an example of P
+and another of Q do not. The witness Lean gives is shown with the statement at step 2 (the review
+page's **Witness comparison**); compare it there. The author's account of a witness (why it is not
+trivial, or one argued in prose) comes with the author's review, after your verdict.
+
+When the scope of a quantifier is ambiguous ("for every ε > 0 there is δ > 0 such that … whenever
+|x − y| < δ": may δ depend on x?), say in the comparison which reading the Lean states and why you
+take the paper to mean it. A counterexample under one reading is worth recording: in the comparison,
+or in an investigation as a counterexample against that reading ([Estimates, differences and
+counterexamples](#saved-investigations)).
+
+### A grid in place of continuous time
+
+The paper says that M is a martingale on [0, T]: E[M_t | F_s] = M_s for all 0 ≤ s ≤ t ≤ T. A Lean
+statement on the grid t_k = kT/N, schematically `∀ j k, j ≤ k → k ≤ N → μ[M (t k) | F (t j)]
+=ᵐ[μ] M (t j)`, tests the condition at grid times only. The process equal to 0 at every grid time
+and to 1 between them meets it, and is not a martingale: at s between two grid times,
+E[M_t | F_s] = 0 for the next grid time t, while M_s = 1. Record in the comparison which
+condition between grid times is lost and where it is used: assumed only at grid times, it makes
+the statement stronger; concluded only at grid times, weaker. The grid condition is the paper's
+own only when the paper's object is the discrete one.
 
 ## Structures
 

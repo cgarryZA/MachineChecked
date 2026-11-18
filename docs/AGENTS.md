@@ -523,6 +523,31 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
 asks it.
 
+**Difficult cases.** Where a verdict is easy to get wrong, the review guide works an example
+through ([Difficult cases](REVIEWING.md#difficult-cases)); the review page lists the same at
+step 2, and `review decide --help` names them. They are optional, and add no field: put what
+you find in the comparison.
+
+- **A definition: the objects it admits.** Compare the objects the paper's definition admits with
+  those the Lean admits: a dropped condition (measurability, say) admits more, and a condition
+  taken from a later statement (a growth bound a corollary assumes) excludes some. Record the
+  coverage of the definition itself, not of the theorems that use it, and say what is missing when
+  it is partial.
+- **A value outside the intended domain.** Lean gives a function a value everywhere (x / 0 = 0,
+  say). That is a representation choice only when you can say why the extra value never matters
+  where the paper uses the object; when it can matter, record a mismatch or an open question.
+- **A supremum or infimum of an empty or unbounded set.** On ℝ, Lean's supremum of an empty set,
+  or of a set not bounded above, is 0, and ⨆ t ∈ s, f t counts 0 for every t outside s, so a bound
+  can hold for a reason the paper does not intend. Check the value on the actual ordered type.
+- **Hypotheses that must hold together.** One witness meeting every hypothesis at once shows that
+  they can hold together; an example for each one separately does not. When the scope of a
+  quantifier is ambiguous, a counterexample under one reading is worth recording. The author's
+  account of a witness comes with the author's review, after your verdict.
+- **A grid in place of continuous time.** A condition stated at grid times can lose what the paper
+  requires between them: a martingale condition tested only at grid points says nothing of the
+  conditional expectation at an intermediate time. Check whether the paper's object is the
+  continuous one.
+
 With `--json`, `lock`, `decide` and `submit` print one document (`machinechecked/review-step@1`)
 saying what was recorded: the unit's `step` now (`compare`, `author`, `submitted`), with
 `locked_at` and `revealed_by` (what you had already seen of the unit) after a lock, the `verdict`,

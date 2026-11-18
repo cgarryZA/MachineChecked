@@ -9,6 +9,7 @@
 // prior exposure observed in this browser.
 
 import { BASIS, COVERAGE, basisWords, coverageLabel, readingWords } from "./coverage.js";
+import difficult from "../../../engine/python/prooflens/data/review_examples.json" with { type: "json" };
 
 export const REPORT_SCHEMA = "prooflens/review-report@1";
 
@@ -62,6 +63,12 @@ export const STEP_GROUPS = [
 
 // What to compare, item by item. The checklist guides the comparison and is kept in the report;
 // the verdict and the written comparison remain what a maintainer reads.
+// Examples for cases where a verdict is easy to get wrong, shown at step 2 as the short reference
+// `review decide --help` names and docs/AGENTS.md quotes (`data/review_examples.json`), with the
+// address of their worked versions in the review guide. Optional reading: they add no field.
+export const DIFFICULT_CASES = difficult.examples.map(({ id, title, text }) => ({ id, title, text }));
+export const DIFFICULT_CASES_GUIDE = difficult.url;
+
 export const CHECKLIST = {
   statement: [
     { key: "setting", label: "Setting and objects", hint: "the spaces, structures and standing assumptions" },
