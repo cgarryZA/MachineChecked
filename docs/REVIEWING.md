@@ -1109,6 +1109,25 @@ the paper. Its verdicts are its own:
 | False as printed | The counterexample or the failing case, and what would repair the step |
 | Cannot determine | What would decide it |
 
+**An author's proposed verdict.** The author of a formalisation may propose a verdict on a printed
+step while formalising it, with the step verdicts above and a note: a gap, its repair, a
+counterexample. The step's entry records it as `proposed` (in the inventory, or in the links file
+under the step's label), optionally naming a Lean theorem that proves the step or refutes it,
+which is the author's and not checked by Lean here:
+
+```json
+"proposed": {"verdict": "false as printed", "note": "At k = 0 it reads n <= 0.",
+             "theorem": "Toy.Acceptance.bound_range_counterexample", "by": "human:A-Author"}
+```
+
+The build writes it apart from the step's record (`data/proposals/`), so a review receives it only
+after its verdict: `read` and `show` never hold it, and the review page fetches it at step 3, where
+it is shown beside the author's review (`review author` prints it too). The step's own page shows
+it under its review. A proposal completes no review and changes no status, neither the step's
+review nor its enclosing result's: a reviewer who reaches another conclusion says so in the
+response to the author's review or in a finding. A bundle, which holds every file from the start,
+and a published audit carry no proposal; a review snapshot does.
+
 A report on a step pins the hash of the step's source text, and follows the same protocol as
 any other: reading locked before the Lean is shown, verdict recorded before the author's review.
 In a full assessment, `review promote` turns an accepted step report into a marker, with the same

@@ -45,6 +45,12 @@ used instead:
 `reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
 coverage, whose open question may be whether any Lean states the step, and no basis.
 `route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+A step's entry may also record the verdict its author proposes, `proposed`: `{verdict, note,
+theorem, by}`, with `verdict` one of the step verdicts and `theorem` a Lean name that is the
+author's and not checked by Lean. The links file takes the same field under the step's label. The
+site writes it to `data/proposals/<claim file>` (`machinechecked/step-proposal@1`: `{claim, unit,
+proposed}`), never into the claim record, so that a review page fetches it only after its
+verdict ([Proof steps](REVIEWING.md#proof-steps)).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 

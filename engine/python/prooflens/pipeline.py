@@ -13,6 +13,7 @@ from . import content as content_mod
 from . import evidence as ev
 from . import manifest as mf
 from . import review_queue as rq
+from . import steps as steps_mod
 from .assess import Assessor, line_location
 from .config import Config, ConfigError
 from .probe import (FINGERPRINT_VERSION, MODDOCS, negations_request, probe_query, proof_key,
@@ -726,9 +727,13 @@ def write_preview(site: Path, index: dict, chunks: dict, store: dict, pdfs: dict
     data = site / "data"
     validate(index, "manifest-index")
     write_json(data / "index.json", index, indent=None)
+    # A step's proposed verdict is kept apart: no client receives it before the reviewer's own.
+    chunks, proposals = steps_mod.split_proposals(chunks)
     for name, chunk in chunks.items():
         validate(chunk, "manifest-claim")
         write_json(data / "claims" / name, chunk, indent=None)
+    for name, record in proposals.items():
+        write_json(data / steps_mod.PROPOSALS / name, record, indent=None)
     for key, record in store.items():
         write_json(data / "decls" / f"{key}.json", record, indent=None)
     for key, record in expansions.items():
