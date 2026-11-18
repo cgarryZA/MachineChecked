@@ -485,7 +485,7 @@ export function changedJudgement(unit, blind, given) {
     const asked = needsDetail(verdict, unit.kind);
     if (!group) problems.push(`the revised verdict '${verdict}' is not one of: ${Object.values(table).flat().map((v) => v.value).join(", ")}`);
     else if (verdict === "refutation not valid" && !unit.refute) problems.push(`'${verdict}' applies only to a unit with a refutation`);
-    else if (verdict === "faithful to the correction" && !unit.correction) problems.push(`'${verdict}' applies only to a correction or a special case of a printed clause`);
+    else if (verdict === "faithful to the correction" && !unit.correction && !unit.introduced_by?.length) problems.push(`'${verdict}' applies only to a correction or a special case of a printed clause, or to a definition only a correction uses`);
     else if (verdict === blind) problems.push(`'${verdict}' is the verdict recorded before the author's review: a changed judgement names another verdict, or only its reason`);
     else if (asked && !detail) problems.push(`the revised verdict '${verdict}' needs its detail: ${asked.charAt(0).toLowerCase()}${asked.slice(1)}`);
     judgement.verdict = { group, value: verdict, detail };

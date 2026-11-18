@@ -333,9 +333,9 @@ def changed_judgement(u: dict, blind: str | None, given) -> tuple[dict | None, l
                        + ", ".join(v for vs in table.values() for v in vs))
         elif verdict in REFUTE_ONLY and not u.get("refute"):
             why.append(f"{verdict!r} applies only to a unit with a refutation")
-        elif verdict in CORRECTION_ONLY and not u.get("correction"):
+        elif verdict in CORRECTION_ONLY and not (u.get("correction") or u.get("introduced_by")):
             why.append(f"{verdict!r} applies only to a correction or a special case of a "
-                       "printed clause")
+                       "printed clause, or to a definition only a correction uses")
         elif verdict == blind:
             why.append(f"{verdict!r} is the verdict recorded before the author's review: a "
                        "changed judgement names another verdict, or only its reason")
@@ -1043,9 +1043,10 @@ class Session:
             # Not "only to a refuted one": that would say, before the verdict, whether it is.
             raise ReviewError(f"{verdict!r} applies only to a locked proposition (a spec unit)",
                               "invalid")
-        if verdict in CORRECTION_ONLY and not u.get("correction"):
+        if verdict in CORRECTION_ONLY and not (u.get("correction") or u.get("introduced_by")):
             raise ReviewError(f"{verdict!r} applies only to a correction or a special case of a "
-                              "printed clause", "invalid")
+                              "printed clause, or to a definition only a correction uses",
+                              "invalid")
         asked = detail_asked(u, verdict)
         if asked and not (detail or "").strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail: {asked[0].lower()}{asked[1:]}",
