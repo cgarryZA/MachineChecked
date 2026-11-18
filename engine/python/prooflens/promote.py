@@ -38,9 +38,11 @@ the review files: the report as exported, which holds every pin the marker binds
 a line ``Review by REVIEWER: VERDICT (report `reports/<stem>.json`).`` and
 `<!-- spec-review: NAME HASH by=REVIEWER source=CLAIM@DIGEST... -->` (or `def-review`,
 `step-review`; no `source` when no claim's passage is read) after the declaration's (or step's)
-last marker, in the exact form the acceptance checker reads, then assesses the stored evidence
-again. A promoted marker records the reviewer the report names; who they are is as the report
-states it.
+last marker, or for a first marker at the end of the file `first_marker_file` gives (the one
+`[review.promote]` names for its kind, when it names one), in the exact form the acceptance
+checker reads, then assesses the stored evidence again. The plan names each marker's file and
+place before anything is written (`places`). A promoted marker records the reviewer the report
+names; who they are is as the report states it.
 
 A report on a structure's unit is one reading and one verdict for the structure and the
 constants Lean generates for it that the unit lists (`unit.lean`: its constructor and
@@ -457,18 +459,57 @@ def _coverage_lines(r: dict) -> list[str]:
             *([f"Would decide it: {cor['would_decide']}"] if cor.get("would_decide") else [])]
 
 
-def target_file(cfg: Config, r: dict, reviews) -> tuple[Path, int | None]:
-    """Where the marker goes: after the declaration's last marker, else at the end of the
-    paper's review file (specs) or of the definitions' review file."""
-    u = r["unit"]
-    hist = history(reviews, u["kind"], marker_name(r))
-    if hist:
-        return (cfg.root / hist[-1].file).resolve(), hist[-1].line
+def first_marker_file(cfg: Config, u: dict) -> tuple[Path, str]:
+    """The review file whose end a unit's first marker goes at, and why: the file
+    `[review.promote]` names for the marker's kind (`spec`, `def` or `step`), else the review
+    file named `definitions.md` (a definition) or `<paper id>.md` (a proposition or a proof step,
+    of the unit's first paper), else the last review file."""
+    kind = u["kind"]
+    named = (getattr(cfg, "review_promote", None) or {}).get(kind)
+    if named is not None:
+        if named.is_dir():
+            raise PromoteError(f"[review.promote] {kind} is a directory, {named}: name a review "
+                               "file")
+        return named, f"[review.promote] {kind}"
     files = review_files(cfg.reviews)
     if not files:
         raise PromoteError("the configuration names no review file")
-    want = "definitions.md" if u["kind"] == "def" else f"{(u.get('papers') or ['?'])[0]}.md"
-    return next((f for f in files if f.name == want), files[-1]), None
+    want = "definitions.md" if kind == "def" else f"{(u.get('papers') or ['?'])[0]}.md"
+    hit = next((f for f in files if f.name == want), None)
+    if hit is not None:
+        return hit, f"the review file named {want}"
+    return files[-1], f"the last review file, as none is named {want}"
+
+
+def place(cfg: Config, r: dict, name: str, reviews) -> tuple[Path, int | None, str] | None:
+    """Where promotion writes the marker of `name`, one of those report `r` writes (`markers`):
+    its file, the line it follows (None: the end of the file) and why. After the declaration's
+    (or step's) last marker; for the report's own declaration or step without one, at the end of
+    `first_marker_file`; None for another declaration of a structure's unit without one, whose
+    marker follows the one written before it."""
+    hist = history(reviews, r["unit"]["kind"], name)
+    if hist:
+        return ((cfg.root / hist[-1].file).resolve(), hist[-1].line,
+                f"after its last marker (line {hist[-1].line})")
+    if name != marker_name(r):
+        return None
+    path, why = first_marker_file(cfg, r["unit"])
+    return path, None, f"at the end, its first marker ({why})"
+
+
+def places(cfg: Config, r: dict, cur: dict) -> list[dict]:
+    """Where each marker of report `r` would be written now (`place`), as `apply` writes it:
+    `name`, `marker`, `file` and `how`, for the plan `review promote` shows before it asks."""
+    reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
+    out = []
+    for n, mk in markers(r, cur):
+        p = place(cfg, r, n, reviews)
+        path, how = (p[0], p[2]) if p else (out[-1]["file"],
+                                            f"after the marker of {out[-1]['name']}")
+        if not path.exists():
+            how += "; a new file"
+        out.append({"name": n, "marker": mk, "file": path, "how": how})
+    return out
 
 
 def insert_after(path: Path, line: int | None, lines: list[str]):
@@ -570,13 +611,12 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                                            encoding="utf-8")
         prev = None
         for n, mk in mks:
-            hist = history(reviews, r["unit"]["kind"], n)
-            if n == marker_name(r):
-                path, line = target_file(cfg, r, reviews)
-            elif hist:
-                path, line = (cfg.root / hist[-1].file).resolve(), hist[-1].line
-            else:
-                path, line = prev
+            p = place(cfg, r, n, reviews)
+            path, line = p[:2] if p else prev
+            if not path.exists():
+                # A file `[review.promote]` names that is not written yet: `reviews` lists it.
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("", encoding="utf-8")
             rel = Path(rdir / f"{stem}.json").resolve()
             try:
                 rel = rel.relative_to(path.parent.resolve())

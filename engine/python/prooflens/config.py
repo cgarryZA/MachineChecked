@@ -105,6 +105,9 @@ class Config:
     # The directory, inside the project, its review snapshot is kept in (`[review] snapshot`),
     # which `build` keeps current (`review_snapshot.project_path`); None when not set.
     review_snapshot: Path | None = None
+    # The review file `review promote` writes a first marker to, by the marker's kind (`spec`,
+    # `def`, `step`: `[review.promote]`); a kind not named follows `promote.first_marker_file`.
+    review_promote: dict[str, Path] = field(default_factory=dict)
 
     @property
     def root(self) -> Path:
@@ -218,7 +221,42 @@ def load(path: str | Path) -> Config:
         readings_ledger=(base / proj["readings_ledger"]).resolve()
         if "readings_ledger" in proj else None,
         review_snapshot=_snapshot_dir(raw.get("review", {}), base, str(path)),
+        review_promote=_promote_files(raw.get("review", {}), base, proj.get("reviews", []),
+                                      str(path)),
     )
+
+
+# The kinds of marker `[review.promote]` names a file for: a proposition's, a definition's and a
+# proof step's (`spec-review`, `def-review`, `step-review`).
+PROMOTE_KINDS = ("spec", "def", "step")
+
+
+def _promote_files(review: dict, base: Path, reviews: list, where: str) -> dict[str, Path]:
+    """`[review.promote]`: for each kind of marker it names, the review file `review promote`
+    writes that kind's first marker to. Each is one of the files `reviews` lists, or a `.md` file
+    directly in a directory it lists, so that the assessment reads what is written there."""
+    given = review.get("promote", {})
+    if not isinstance(given, dict):
+        raise ConfigError(f"{where}: [review] promote is a table: [review.promote] with "
+                          f"{', '.join(PROMOTE_KINDS)}")
+    extra = sorted(set(given) - set(PROMOTE_KINDS))
+    if extra:
+        raise ConfigError(f"{where}: [review.promote] takes {', '.join(PROMOTE_KINDS)}, not "
+                          f"{', '.join(extra)}")
+    listed = {(base / r).resolve() for r in reviews if isinstance(r, str)}
+    out = {}
+    for kind, v in given.items():
+        if not isinstance(v, str) or not v.strip():
+            raise ConfigError(f"{where}: [review.promote] {kind} must be the path of a review "
+                              "file")
+        p = (base / v).resolve()
+        if p not in listed and not (p.parent in listed and p.suffix == ".md"):
+            raise ConfigError(f"{where}: [review.promote] {kind} must be one of the review files "
+                              f"`reviews` lists, or a .md file directly in a directory it lists, "
+                              f"so that the assessment reads the markers written there: {v!r} "
+                              "is neither")
+        out[kind] = p
+    return out
 
 
 def _snapshot_dir(review: dict, base: Path, where: str) -> Path | None:
