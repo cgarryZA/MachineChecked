@@ -1504,6 +1504,9 @@ def _check_simple_json(a, root: Path, view: dict) -> tuple[dict, list[dict], boo
                                for x in c.get("suggestions", [])],
                "references": [o["id"] for o in c.get("references", [])],
                "unit": c.get("unit", "statement"), "parent": c.get("parent"),
+               # A step whose proof's statement is not certain names the candidates.
+               **({"parent_candidates": c["parent_candidates"]}
+                  if c.get("parent_candidates") else {}),
                **(_step_json(c) if c.get("unit") else {})}
               for c in body["claims"]]
     summary, facts, hints = _check_workspaces(view, root)

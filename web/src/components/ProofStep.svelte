@@ -70,7 +70,7 @@
 
 {#if part === "finding" && st}
   <div class="finding" data-review={rv.state}>
-    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
+    <p class="small kind">{UNIT[st.unit] || "Proof step"}{#if st.parent}{" of "}<a href={href(index.release, "read", claim.paper, st.parent.id)}>{st.parent.number || st.parent.id}</a>{:else if st.parent_candidates?.length}<span data-parent="uncertain">{" whose statement is not certain: "}{#each st.parent_candidates as c, i (c.id)}{i ? " or " : ""}<a href={href(index.release, "read", claim.paper, c.id)}>{c.number || c.id}</a>{/each}</span>{/if}{#if st.passage}{", selected at "}<code>{span(st.passage)}</code>{/if}</p>
     {#if st.passage && !st.passage.matches}
       <p class="small changed" data-passage="changed">Its lines no longer hold the text it was selected at, so no review of it counts until it is selected again{#if st.passage.moved_to}{"; that text is now at "}<code>{span({ file: st.passage.file, ...st.passage.moved_to })}</code>{/if}.
         {#if editable && st.passage.moved_to}<button class="btn ghost" disabled={busy} onclick={() => onpassage(spec(st.passage.file, st.passage.moved_to.start_line, st.passage.moved_to.end_line))}>Select it there</button>{/if}</p>

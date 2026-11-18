@@ -291,6 +291,10 @@ def passage(ch: dict, stage: str) -> dict:
         out["step"] = {"unit": st.get("unit"),
                        "parent": {k: par.get(k) for k in ("id", "number") if par.get(k)},
                        "question": "Does the printed step hold, in its context?"}
+        if st.get("parent_candidates"):
+            # Its proof names no statement and follows an aside: either may be the one proved.
+            out["step"]["parent_candidates"] = [{k: c.get(k) for k in ("id", "number")}
+                                                for c in st["parent_candidates"]]
         if ch.get("context_tex"):
             out["context"] = ch["context_tex"]
             if ch.get("context_cut"):
@@ -1314,8 +1318,12 @@ def passage_text(p: dict) -> str:
                  f"-{part['end_line']}):\n{part['text']}")
     if p.get("step"):
         par = p["step"].get("parent") or {}
-        body = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"
-                f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
+        maybe = p["step"].get("parent_candidates") or []
+        head = (f"A step of the proof of {par.get('number') or par.get('id') or 'its result'}"
+                f" ({par.get('id') or 'no parent recorded'})" if par or not maybe else
+                "A step of a proof whose statement is not certain: "
+                + " or ".join(c.get("number") or c.get("id") for c in maybe))
+        body = f"{head}. {p['step']['question']}\n" + body
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
     if p.get("surroundings"):

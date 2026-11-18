@@ -2353,6 +2353,8 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
             "id": c["id"], "paper": c["paper"], "number": c["number"], "title": c["title"],
             "heading": c["title"] or None, "kind": c["kind"], "scope": c["scope"],
             "unit": steps.unit_of(c), "parent": c.get("parent"),
+            **({"parent_candidates": c["parent_candidates"]} if c.get("parent_candidates")
+               else {}),
             **fields(c["status_code"], c.get("status_detail")),
             "anchor": mf.index_anchor(anchor, akind),
             "counts": {}, "file": fname, "linked": len(c["links"]),
@@ -2391,7 +2393,9 @@ def write_view_site(view: dict, site: Path, web_dist: Path | None,
                                  [_link_view(l, root) for l in c.get("route_links", [])],
                                  c.get("correspondence"), c.get("route_note"),
                                  steps.review(c.get("step_reports", []), c["source_sha256"]),
-                                 proposed=c.get("proposed")))
+                                 proposed=c.get("proposed"),
+                                 candidates=[_parent_row(by_id.get(x))
+                                             for x in c.get("parent_candidates") or []]))
             if c.get("passage"):
                 # A selected passage's pin, and whether its lines still hold its text.
                 chunks[fname]["step"]["passage"] = c["passage"]

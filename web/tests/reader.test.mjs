@@ -3734,6 +3734,20 @@ await check("a proof passage whose lines changed says so, and where its text is 
   assert.match(words(await pg.locator(".claim-view .view .steps li").nth(1).textContent()), /its lines changed since it was selected/);
 });
 
+// #572: a step whose proof names no statement and follows an aside (a remark) has no parent; its
+// page names the statements its proof may prove, each a link, and asserts neither.
+await check("a step whose proof's statement is not certain names the candidates", 1300, async (pg) => {
+  const candidates = [{ id: "T:thm:bound", number: "Theorem 2.5" }, { id: "T:rem:pred", number: "Remark 2.4" }];
+  await pg.route(`**/toy/data/claims/${stepRow.file}`, async (route) => {
+    const c = await (await route.fetch()).json();
+    route.fulfill({ json: { ...c, parent: null, step: { ...c.step, parent: null, parent_candidates: candidates } } });
+  });
+  await toyClaim(pg, "T:eq:bound-range");
+  const kind = pg.locator(".claim-view .view .paper .finding .kind");
+  assert.match(words(await kind.textContent()), /^Equation in a proof whose statement is not certain: Theorem 2\.5 or Remark 2\.4$/);
+  assert.deepEqual(await kind.locator("[data-parent=uncertain] a").allTextContents(), ["Theorem 2.5", "Remark 2.4"]);
+});
+
 // #544: in the local reader, lines of a statement's proof are selected as a passage and sent as
 // `link --passage` sends them; a line of a step already selected cannot be chosen again.
 for (const width of [1300, 390]) await check("lines of a proof are selected as a passage in the local reader", width, async (pg) => {
