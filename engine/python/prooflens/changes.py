@@ -304,6 +304,8 @@ WHY = {
     "source-notation-unrecorded": "its last review did not record the definitions of the "
                                   "notation macros the passage uses",
     "no-reading": "its review marker records no reading (no review text precedes it)",
+    "source-no-pin": "this claim has no source pin, so no reading of its passage is checked; "
+                     "pin it, then read it at the pin",
 }
 
 
