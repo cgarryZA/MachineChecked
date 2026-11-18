@@ -725,7 +725,8 @@ class Session:
             raise ReviewError(f"{u['id']}: the reading is already locked", "order")
         return d
 
-    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False,
+             full: bool = False) -> str | dict:
         """Step 1: the unit's passages; with `context`, each with the paper around it
         (`with_context`)."""
         u = self.unit(uid)
@@ -743,7 +744,7 @@ class Session:
             return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
                                      "reveals": reveals}}
         lean = step_lean_text(pk.get("unit") or {})
-        return cmp.packet_text(pk) + (f"\n\n{lean}" if lean else "") + warn
+        return cmp.packet_text(pk, full) + (f"\n\n{lean}" if lean else "") + warn
 
     def with_context(self, pk: dict) -> dict:
         """The read step's packet `pk` with, on each passage, the paper around it
