@@ -105,6 +105,8 @@ The claim inventory lists each printed claim, its pinned source, scope and claus
 
 This is one claim entry inside `claims.json`. The acceptance theorem must have the specification’s **exact closed proposition** as its type.
 
+Every entry of a paper read from its LaTeX source carries a source pin (`source_sha256`). `check` reports an entry without one as a violation (`source-pin-missing`) and counts no review of its passage until it is pinned; the violation gives the fields to add (`fix` in `check --json`), with the digest of the passage as this build's manuscript prints it.
+
 Other clause fields include `refute` (a proof of the printed proposition's negation), `accept_from` (a proof from other propositions, below), `corrects` (which original clause a correction addresses, with its `kind`), and `defs` for a definition claim.
 
 **Corrections, special cases and refutations of a wider statement.** A clause other than the printed ones says how it relates to a printed clause, and a refutation says how far it reaches:

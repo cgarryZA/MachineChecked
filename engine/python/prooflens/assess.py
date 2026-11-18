@@ -630,6 +630,7 @@ class Assessor:
         self._pins: dict[str, str | None] | None = None
         self._witness_only: dict[str, list[str]] | None = None
         self._unpinned: dict[str, str] | None = None
+        self._pinless: set[str] | None = None
 
     # -- declarations the probe did not find ------------------------------------------------
 
@@ -680,11 +681,13 @@ class Assessor:
         no reading and does not count (`why` "no-reading"), unless its reviewer is one the
         configuration allows bare markers by (`bare_markers_by`). When the last marker is at
         another hash but an earlier one would be the record without it, `why` is "shadowed" and
-        `shadowed` names both markers; the state is stale all the same."""
+        `shadowed` names both markers; the state is stale all the same. A claim with no source
+        pin has no digest a reading can record, so a review that must read its passage is
+        stale (`why` "source-no-pin") until the claim is pinned and read at the pin."""
         hist = history(self.reviews, target, name)
         last = hist[-1] if hist else None
         readers = review_sources.digests(self.inv, target, name, self.tex)
-        need = {claim: readers[claim]} if claim in readers else readers
+        need = self._need(target, name, readers, claim)
         why = source_claim = bare = split = shadowed = None
         record = last
         if last is None:
@@ -725,6 +728,20 @@ class Assessor:
             if shadowed:
                 out["shadowed"] = shadowed
         return out
+
+    def _need(self, target: str, name: str, readers: dict[str, str],
+              claim: str | None) -> dict[str, str | None]:
+        """The passages a current review of `name` must have read, by claim, with the digest of
+        each (`readers`, the pinned claims it reads): `claim`'s alone when it is one of them,
+        otherwise every one. A claim it reads that has no source pin (`pinless`) is among them
+        with no digest, which no marker records (`_read_one`)."""
+        bare = {c["id"]: None for c in review_sources.reading_claims(self.inv, target, name)
+                if c["id"] in self.pinless()} if self.pinless() else {}
+        if claim in bare:
+            return {claim: None}
+        if claim in readers:
+            return {claim: readers[claim]}
+        return {**readers, **bare}
 
     def _shadowed(self, hist: list[Review], rec: dict | None,
                   need: dict[str, str]) -> dict | None:
@@ -808,7 +825,10 @@ class Assessor:
         records only the claim's pin, or no digests, read the passage without their definitions
         (`notation-unrecorded`). A passage the manuscript no longer matches (`unpinned_passages`)
         is unread by every marker until it is pinned again and read at the new pin
-        (`unpinned`)."""
+        (`unpinned`), and one with no pin (`pinless_passages`) until it is pinned and read at
+        the pin (`no-pin`)."""
+        if cid in self.pinless():
+            return "no-pin"
         if cid in self.unpinned():
             return "unpinned"
         if self._pins is None:
@@ -833,7 +853,7 @@ class Assessor:
                 return {"changed": "source-changed", "unread": "source-unread",
                         "unrecorded": "source-unrecorded",
                         "notation-unrecorded": "source-notation-unrecorded",
-                        "unpinned": "source-unpinned"}[st], cid
+                        "unpinned": "source-unpinned", "no-pin": "source-no-pin"}[st], cid
         return "source-changed", sorted(need)[0]   # not reached: the last marker read them
 
     def unpinned(self) -> dict[str, str]:
@@ -842,6 +862,13 @@ class Assessor:
         if self._unpinned is None:
             self._unpinned = unpinned_passages(self.inv, self.tex)
         return self._unpinned
+
+    def pinless(self) -> set[str]:
+        """The claims with no source pin in a paper read from its LaTeX source
+        (`pinless_passages`)."""
+        if self._pinless is None:
+            self._pinless = pinless_passages(self.inv, self.tex)
+        return self._pinless
 
     def unpinned_note(self, cid: str | None) -> str:
         """Why the claim `cid`'s passage reads as unread, for a reason or a finding."""
@@ -869,6 +896,9 @@ class Assessor:
         if why == "source-unpinned":
             return (f" ({self.unpinned_note(r.get('source_claim'))}; pin the passage again and "
                     "record a reading of the new text)")
+        if why == "source-no-pin":
+            return (f" ({self._claim_label(r.get('source_claim'))} has no source pin; pin its "
+                    "passage and record a reading at the pin)")
         if why == "source-unread" and r.get("split"):
             return (" (no single review read all the passages that name it, and a review must "
                     "read them together: " + "; ".join(
@@ -1567,6 +1597,10 @@ class Assessor:
                              f"{self.unpinned_note(c['spec_review'].get('source_claim'))}; "
                              "the proposition's review counts only once the passage is pinned "
                              "again and read"),
+                         "source-no-pin": (
+                             f"{self._claim_label(c['spec_review'].get('source_claim'))} has no "
+                             "source pin: the proposition's review counts only once its passage "
+                             "is pinned and read at the pin"),
                          "no-reading": "the proposition's review marker records no reading "
                                        "(no review text)"}.get(
                         c["spec_review"].get("why"),
@@ -1575,8 +1609,8 @@ class Assessor:
                 why = r.get("why")
                 defs[d] = why if r["state"] == "stale" and why in (
                     "source-changed", "source-unread", "source-unrecorded",
-                    "source-notation-unrecorded", "source-unpinned", "no-reading",
-                    "shadowed") else r["state"]
+                    "source-notation-unrecorded", "source-unpinned", "source-no-pin",
+                    "no-reading", "shadowed") else r["state"]
                 if defs[d] == "shadowed":
                     shadowed[d] = r
             if c.get("witness") and not c.get("witness_ok"):
@@ -1606,6 +1640,8 @@ class Assessor:
                              ("source-unpinned", "have a passage the manuscript no longer "
                                                  "matches: their review counts only once it "
                                                  "is pinned again and read"),
+                             ("source-no-pin", "have a passage with no source pin: their review "
+                                               "counts only once it is pinned and read"),
                              ("source-unrecorded", "were reviewed before source pins were "
                                                    "recorded"),
                              ("no-reading", "have a review marker that records no reading"),
@@ -2026,7 +2062,9 @@ class Assessor:
                 line = line_location(c)
                 if line is not None:
                     region = (t.get("regions") or {}).get(c["id"], {})
-                    if c.get("source_hash_scheme") not in SOURCE_SCHEMES:
+                    if c["id"] in self.pinless():
+                        self.pin_missing(c, region=region)
+                    elif c.get("source_hash_scheme") not in SOURCE_SCHEMES:
                         self.findings.append(_finding(
                             "violation", "source-hash-scheme", c["id"],
                             f"{c['location']}: source regions must be pinned at the original "
@@ -2058,6 +2096,8 @@ class Assessor:
                     self.macros_pinned_elsewhere(c, region.get("pinned_elsewhere") or [])
                     continue
                 a = match_anchor(c, anchors)
+                if c["id"] in self.pinless():
+                    self.pin_missing(c, anchor=a)
                 if a is None:
                     if c.get("kind") in t.get("envs", []):
                         self.findings.append(_finding(
@@ -2074,6 +2114,29 @@ class Assessor:
                         "violation", "inventory-gap", f"{pid}:{a.get('label') or a['env']}",
                         f"{a['env'].capitalize()} {a.get('number')} ({a['file']}:{a['line']}) "
                         f"is in the paper but not in the inventory"))
+
+    def pin_missing(self, claim: dict, region: dict | None = None,
+                    anchor: dict | None = None) -> None:
+        """A violation for a claim with no source pin (`pinless_passages`): the source check has
+        nothing to compare its passage with, and no review of the passage counts until it is
+        pinned. When the build located the passage (its `region`, or the `anchor` of its
+        environment), `fix` gives the fields that pin it as this build's manuscript prints it;
+        no inventory command pins a claim that has no pin."""
+        if region and not region.get("error") and region.get("sha256"):
+            fix = {"source_hash_scheme": region["scheme"], "source_sha256": region["sha256"]}
+        elif anchor and anchor.get("source_sha256"):
+            fix = {"source_sha256": anchor["source_sha256"]}
+        else:
+            fix = None
+        import json
+        how = (f"pin it as this build's manuscript prints it: add {json.dumps(fix)[1:-1]} to its "
+               "inventory entry, then record a reading at the pin" if fix else
+               "this build does not locate its passage: give its location, then pin it")
+        self.findings.append(_finding(
+            "violation", "source-pin-missing", claim["id"],
+            f"{self._claim_label(claim['id'])} has no source pin, so the source check does not "
+            f"compare its passage with the manuscript and no review of it counts; {how}",
+            **({"fix": fix} if fix else {})))
 
     def region_advice(self, claim: dict, region: dict):
         """A warning for each way the claim's source region may not hold its text
@@ -2125,11 +2188,12 @@ def unpinned_passages(inventory: dict, tex: dict | None) -> dict[str, str]:
     listed.
 
     A review reads the paper's text, so a reading of such a passage does not count until the
-    passage is pinned again and read at the new pin (`Assessor._read_one`)."""
+    passage is pinned again and read at the new pin (`Assessor._read_one`). A claim with no pin
+    has none to differ from: it is listed by `pinless_passages`."""
     out: dict[str, str] = {}
     for c in inventory.get("claims", []):
         t = (tex or {}).get(c.get("paper")) or {}
-        if t.get("mode") != "latex":
+        if t.get("mode") != "latex" or not c.get("source_sha256"):
             continue
         if line_location(c) is not None:
             if c.get("source_hash_scheme") not in SOURCE_SCHEMES or source_matches(c, t):
@@ -2146,6 +2210,16 @@ def unpinned_passages(inventory: dict, tex: dict | None) -> dict[str, str]:
             out[c["id"]] = (f"the source of {c.get('number', c['id'])} differs from the frozen "
                             "inventory")
     return out
+
+
+def pinless_passages(inventory: dict, tex: dict | None) -> set[str]:
+    """The claims of a paper read from its LaTeX source that have no source pin
+    (`source_sha256`). The source check has nothing to compare their passage with, so no
+    reading of it can be checked: a review that must read it does not count until it is pinned
+    and read at the pin (`Assessor._read_one`), and the inventory check names each claim
+    (`source-pin-missing`). A paper read only from its PDF has no source check."""
+    return {c["id"] for c in inventory.get("claims", []) if not c.get("source_sha256")
+            and ((tex or {}).get(c.get("paper")) or {}).get("mode") == "latex"}
 
 
 def line_location(claim: dict) -> int | None:

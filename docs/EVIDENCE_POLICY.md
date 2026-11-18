@@ -112,6 +112,13 @@ passage of its own.
   and record a reading at the new pin to restore the review; `review promote` refuses a report
   on such a passage. A paper read only from its PDF has no source check, and its readings count
   against the pin.
+- **Every passage needs a pin.** A claim of a paper read from its LaTeX source that has no
+  source pin (no `source_sha256`) is a `source-pin-missing` violation naming the claim: the
+  source check has nothing to compare its passage with. No reading of its passage counts: a
+  review that reads it is pending (`source-no-pin`) until the claim is pinned and a reading is
+  recorded at the pin. The violation gives the fields that pin the passage as the build's
+  manuscript prints it (`fix`, when the build locates the passage); no inventory command pins a
+  claim that has no pin.
 - **Markers written before the digests were recorded.** Such a marker counts for a claim only
   while the project's Git history shows the claim's passage unchanged since the marker was
   written: the commit that wrote the marker's line, and every later version of the inventory,
