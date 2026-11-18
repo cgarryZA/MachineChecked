@@ -69,7 +69,7 @@ A citation followed by the qualifier (`Lemma 1 (Lemma 7 of the journal version)`
 
 With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
 
-A paper published as a PDF is configured with `source = { path = "…" }` and `pdf = "paper.pdf"` (no `root`); its numbered statements are found by their bold headings, and any the headings miss can be placed by hand in `anchors.json`. To meet the release gate's source condition, pin the PDF with `pdf_sha256 = "<its SHA-256>"`: the gate then checks the hash, requires every claim in scope to be found, and states that the source is a PDF with approximate claim positions.
+A paper published as a PDF is configured with `source = { path = "…" }` and `pdf = "paper.pdf"` (no `root`); its numbered statements are found by their bold headings (in a PDF with none, by a statement kind and number starting a paragraph), and any the headings miss can be placed by hand in `anchors.json`. To meet the release gate's source condition, pin the PDF with `pdf_sha256 = "<its SHA-256>"`: the gate then checks the hash, requires every claim in scope to be found, and states that the source is a PDF with approximate claim positions.
 
 Under `[project]`, `author` is the name the audit is published under, `issues` the GitHub repository where Report issue opens reports, `site_url` the published reader's address, and `repository` the GitHub repository of the Lean source when it is not the project's `origin` remote. `repository_private = true` keeps the repository's name out of the reader's text; its Lean source links still name it, and open only for people with access.
 

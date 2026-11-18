@@ -28,7 +28,7 @@ The agent guides' commands are tested: `tests/simple/test_agent_guide.py` runs e
 |---|---|
 | `engine/python/prooflens/simple.py` | Find a paper, scan ordinary Lean projects and manage links |
 | `engine/python/prooflens/tex.py` | Compile LaTeX and extract claim positions |
-| `engine/python/prooflens/pdfclaims.py` | Find numbered statements in a PDF by their bold headings |
+| `engine/python/prooflens/pdfclaims.py` | Find numbered statements in a PDF by their bold headings, or, in a PDF with none, by a kind and number starting a paragraph |
 | `engine/python/prooflens/formalization.py` | Read a project's `formalization.yaml` |
 | `engine/python/prooflens/paper.py` | A paper page's data (the site's paper pages), in the reader's standard format |
 | `engine/python/prooflens/data/ProofLensProbe.lean` | Elaborated Lean declarations and dependency data |
