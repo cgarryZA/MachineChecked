@@ -15,6 +15,8 @@ it now is, or that the acceptance rules cannot count as an independent review:
   defect. A report without one is promoted as before;
 * the reading must have been locked before the verdict, and the verdict recorded before the
   author's review was shown;
+* the reviewer must not have changed their judgement after the author's review was shown
+  (`changed_judgement`): such a report is never promoted, whatever the maintainer passes;
 * the reviewer must not be an author of the statements, and a model of the same family as the
   author (or of unknown family) is refused unless the maintainer accepts it explicitly;
 * the reading must have been blind: a report whose unit's Lean or author's review the reviewer
@@ -72,6 +74,9 @@ from .reviews import history, load_reviews, review_files
 ACCEPTABLE = {"faithful", "faithful with representation choices", "broader",
               "faithful to the correction"}
 NEEDS_DETAIL = {"faithful with representation choices", "broader"}
+# A verdict that a proof of the proposition carries to the printed claim but a refutation does
+# not: the printed claim can hold while a more general proposition fails.
+NOT_FOR_A_REFUTATION = {"broader"}
 # A review of a printed step records a finding; an open question is not one.
 STEP_ACCEPTABLE = {"holds as printed", "holds, with a gap in the argument", "false as printed"}
 STEP_NEEDS_DETAIL = {"holds, with a gap in the argument", "false as printed"}
@@ -172,6 +177,7 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
     if v == "faithful to the correction" and not corrects_a_clause(body, u):
         why.append("verdict 'faithful to the correction' applies only to the proposition of a "
                    "clause that corrects, or is a special case of, a printed clause")
+    why += refutation_refusals(body, u, v)
     if v == "cannot determine":
         why.append("verdict 'cannot determine' is not one that is recorded as a review: it "
                    "leaves an open question, and no defect")
@@ -183,6 +189,7 @@ def check_report(r: dict, body: dict, cfg: Config, accept_same_family: bool,
                    + ("the argument or the failing case" if step else
                       "representation choices or instantiation") + ")")
     why += coverage_refusals(r)
+    why += changed_refusals(r)
     if not r["reading"].get("text", "").strip():
         why.append("the report has no reading of the paper")
     t = [r["reading"].get("locked_at"), r["comparison"].get("decided_at"),
@@ -250,6 +257,69 @@ def corrects_a_clause(body: dict, u: dict) -> bool:
     return u.get("kind") == "spec" and any(
         cl.get("spec") == u.get("name") and (cl.get("corrects") or cl.get("restricts"))
         for c in (body.get("inventory") or {}).get("claims", []) for cl in c.get("clauses", []))
+
+
+def refutation_refusals(body: dict, u: dict, verdict: str) -> list[str]:
+    """Why `verdict` cannot be recorded for the unit's proposition when a clause of the
+    inventory in `body` refutes it as printed: a verdict a refutation does not carry to the
+    printed claim (`NOT_FOR_A_REFUTATION`) would let the refutation read as reviewed. A
+    refutation declared to lie outside the paper's standing assumptions refutes the formal
+    proposition only, never the printed claim, so such a verdict agrees with it."""
+    from .assess import OUTSIDE
+    if u.get("kind") != "spec" or verdict not in NOT_FOR_A_REFUTATION:
+        return []
+    refuting = [f"{c['id']} (clause {cl.get('name', 'main')!r})"
+                for c in (body.get("inventory") or {}).get("claims", [])
+                for cl in c.get("clauses") or []
+                if cl.get("spec") == u.get("name") and cl.get("refute")
+                and cl.get("refute_scope") != OUTSIDE]
+    if not refuting:
+        return []
+    return [f"verdict {verdict!r} says the proposition is more general than the printed claim, "
+            "so a refutation of it does not refute the printed claim; it is refuted by "
+            + ", ".join(refuting) + ". A review of a refuted proposition is recorded only with a "
+            "verdict that carries the refutation to the printed claim (faithful, or faithful "
+            "with representation choices); otherwise the clause should declare its refutation "
+            f"outside the paper's standing assumptions (refute_scope {OUTSIDE!r})"]
+
+
+def refuted_lines(r: dict) -> list[str]:
+    """The text block's line for each theorem the report records as refuting its proposition
+    (`refuted_by`, #685): what its verdict means for the claim."""
+    from .review_queue import refutation_line
+    return [f"Refuted: {x.get('line') or refutation_line(x)}" for x in r.get("refuted_by") or []
+            if isinstance(x, dict) and x.get("theorem")]
+
+
+def changed_text(r: dict) -> str | None:
+    """A report's judgement changed after the author's review was shown (`changed_judgement`),
+    beside its blind verdict, in words; None when it records none."""
+    cj = r.get("changed_judgement")
+    if not cj:
+        return None
+    if not isinstance(cj, dict):
+        return "the report's changed judgement is not a record the review protocol writes"
+    v, blind = cj.get("verdict"), r.get("verdict") or {}
+    return (f"blind verdict {blind.get('value')!r} (recorded "
+            f"{(r.get('comparison') or {}).get('decided_at')}, before the author's review); "
+            f"changed after the author's review (recorded {cj.get('recorded_at')})"
+            + (f" to {v.get('value')!r}" + (f" ({v['detail']})" if v.get("detail") else "")
+               if isinstance(v, dict) and v.get("value") else ", naming no verdict")
+            + f": {cj.get('reason') or 'no reason given'}")
+
+
+def changed_refusals(r: dict) -> list[str]:
+    """Why a report whose reviewer changed their judgement after the author's review is never
+    promoted: its blind verdict is disputed by its own reviewer, and the later judgement is not
+    blind. No option accepts it."""
+    said = changed_text(r)
+    if said is None:
+        return []
+    return [f"its reviewer changed their judgement after the author's review: {said}. The "
+            "blind verdict is not promoted, and the later judgement is not a blind review: ask "
+            "for a fresh independent review, or record the later judgement as an informed "
+            "review (`machinechecked review ... --mode informed`), which promotion accepts only "
+            "with --allow-revealed"]
 
 
 def coverage_refusals(r: dict) -> list[str]:
@@ -416,6 +486,9 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         + (f" — {r['verdict']['detail']}" if r['verdict'].get('detail') else ""),
         *_covers_lines(r),
         *_coverage_lines(r),
+        *([f"Judgement changed after the author's review: {changed_text(r)}"]
+          if changed_text(r) else []),
+        *refuted_lines(r),
         f"Disagreements with the author's review (shown {r['author_review']['shown_at']}): "
         f"{r['author_review'].get('disagreements') or 'none'}", ""])
 

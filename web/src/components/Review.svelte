@@ -1,5 +1,6 @@
 <script>
   import { untrack } from "svelte";
+  import { loadProposal } from "../lib/data.js";
   import { loadQueue, loadClaim, canEdit, askReviewOrder, reviewWork, reviewStep, reviewInWorkspace } from "../lib/data.js";
   import { href, route, go, withQuery } from "../lib/route.svelte.js";
   import { VERDICTS, GROUPS, CHECKLIST, MARKS, STEP_VERDICTS, STEP_GROUPS, loadWork, saveWork, now, reviewerId,
@@ -8,6 +9,7 @@
            draftCoverage, coverageWords, undoReport, leanOf, READER_SEEN } from "../lib/review.js";
   import { questionsOf } from "../lib/review.js";
   import { DIFFICULT_CASES, DIFFICULT_CASES_GUIDE } from "../lib/review.js";
+  import { changedJudgement } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
   import WorkspaceFile from "./WorkspaceFile.svelte";
@@ -362,7 +364,8 @@
     const unitId = current.id;
     if (served) {
       settle();
-      const st = await act("submit", { unit: unitId, disagreements: draft.disagreements || "none" });
+      // An explicit `{}` when no judgement changed: the engine does not fall back on what was saved.
+      const st = await act("submit", { unit: unitId, disagreements: draft.disagreements || "none", changed: $state.snapshot(draft.changed) || {} });
       if (!st) return;
       work.skipped = work.skipped.filter((id) => id !== unitId);
       lastIssue = st.report.issue_draft;
@@ -383,6 +386,34 @@
     lastIssue = r.issue_draft;
     persist();
   }
+  // A proof step's author's proposed verdict: asked for only once the verdict is recorded, so the
+  // page holds none before it (#678).
+  let proposal = $state(null);
+  $effect(() => {
+    const u = current, d = draft;
+    proposal = null;
+    if (!u || u.kind !== "step" || d?.stage !== "author" || (served && !d.author_shown_at)) return;
+    loadProposal(index, u.claims[0]?.id).then((p) => { if (current === u) proposal = p; });
+  });
+  const STEP_LABEL = Object.fromEntries(Object.values(STEP_VERDICTS).flat().map((v) => [v.value, v.label]));
+  // A judgement changed after the author's review (`changedJudgement`): kept beside the verdict.
+  function toggleChanged() {
+    draft.changed = draft.changed ? null : { reason: "", verdict: null, detail: "" };
+    persist();
+  }
+  function changedEdited() {
+    if (draft.changed) delete draft.changed.recorded_at;
+    persist();
+  }
+  const revisedVerdicts = $derived(current ? Object.values(current.kind === "step" ? STEP_VERDICTS : VERDICTS).flat()
+    .filter((v) => v.value !== draft?.verdict && (!v.refuteOnly || current.refute) && (!v.correctionOnly || current.correction)) : []);
+  const revisedDetail = $derived(draft?.changed?.verdict ? needsDetail(draft.changed.verdict, current?.kind) : null);
+  // Ticked, the box asks for the reason even before anything is typed.
+  const changedProblems = $derived(!draft?.changed ? [] : (() => {
+    const { problems } = changedJudgement(current, draft.verdict, draft.changed);
+    return problems.length || (draft.changed.reason || "").trim() ? problems
+      : ["a changed judgement says why it changed: give the reason"];
+  })());
   function skip() {
     if (!work.skipped.includes(current.id)) work.skipped.push(current.id);
     else work.skipped = [...work.skipped.filter((id) => id !== current.id), current.id];
@@ -695,11 +726,41 @@
                 <p class="lbl">Scope of the refutation of {s.claim}, as its author records it</p>
                 <pre class="author">{s.lines.join("\n")}</pre>
               {/each}
+              {#if proposal}
+                <div class="proposal" data-verdict={proposal.verdict}>
+                  <p class="lbl">The author's proposed verdict on this step{proposal.by ? ", by " + proposal.by : ""}</p>
+                  <p><strong>{STEP_LABEL[proposal.verdict] || proposal.verdict}</strong>{#if proposal.note}<span class="pre">{" — " + proposal.note}</span>{/if}</p>
+                  {#if proposal.theorem}<p class="small">It names <code>{proposal.theorem}</code> (the author's; Lean does not check it here).</p>{/if}
+                  <p class="faint small">A proposal completes no review: your verdict is the review. A different conclusion goes in your response below.</p>
+                </div>
+              {/if}
+              {#each current.refuted_by || [] as r}
+                <!-- What the verdict just recorded means for the claim (#685). -->
+                <p class="refuted-line" data-checked={r.checked}>{r.line}</p>
+              {/each}
             {/if}
             <label for="author-response">Response to the author’s review</label>
             <textarea id="author-response" rows="3" bind:value={draft.disagreements} oninput={persist} placeholder="Where you disagree with the author's review, or where it claims more than the Lean shows (or “none”). Your verdict stays as recorded."></textarea>
+            <label class="changed-toggle"><input type="checkbox" checked={!!draft.changed} onchange={toggleChanged} /> My judgement changed after reading the author's review</label>
+            {#if draft.changed}
+              <div class="changed">
+                <p class="faint small">Your verdict stays as recorded, with this beside it. Promotion does not promote a report whose judgement changed, and a published audit does not count it.</p>
+                <label for="changed-reason">Why your judgement changed</label>
+                <textarea id="changed-reason" rows="3" bind:value={draft.changed.reason} oninput={changedEdited}></textarea>
+                <label for="changed-verdict">The verdict you would give now (optional)</label>
+                <select id="changed-verdict" bind:value={draft.changed.verdict} onchange={changedEdited}>
+                  <option value={null}>None named</option>
+                  {#each revisedVerdicts as v (v.value)}<option value={v.value}>{v.label}</option>{/each}
+                </select>
+                {#if revisedDetail}
+                  <label for="changed-detail">{revisedDetail}</label>
+                  <textarea id="changed-detail" rows="2" bind:value={draft.changed.detail} oninput={changedEdited}></textarea>
+                {/if}
+                {#each changedProblems as why}<p class="small bad">{why}</p>{/each}
+              </div>
+            {/if}
             <div class="row">
-              <button class="btn" onclick={saveReport}>Save report</button>
+              <button class="btn" onclick={saveReport} disabled={changedProblems.length > 0}>Save report</button>
               <button class="btn ghost" onclick={skip}>Skip</button>
             </div>
           {/if}
@@ -749,6 +810,11 @@
   @media (max-width: 640px) { .who { margin-left: 0; } }
   .checklist { list-style: none; padding: 0; margin: 6px 0; }
   .difficult { margin: 4px 0 8px; }
+  .changed-toggle { display: block; margin: 8px 0 4px; }
+  .proposal { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 8px 0; }
+  .proposal p { margin: 2px 0; }
+  .refuted-line { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 8px 0; }
+  .changed { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 4px 0 8px; }
   .difficult ul { margin: 6px 0; padding-left: 18px; }
   .difficult li { margin: 4px 0; }
   .checklist li { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }

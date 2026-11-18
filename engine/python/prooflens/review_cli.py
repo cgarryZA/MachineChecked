@@ -135,7 +135,7 @@ class ReviewError(RuntimeError):
 EDITABLE = {"read": ("reading",),
             "compare": ("comparison", "witness", "checklist", "group", "verdict", "detail",
                         "coverage", "basis", "argument", "bridge", "would_decide"),
-            "author": ("disagreements",)}
+            "author": ("disagreements", "changed")}
 MARKS = ("matches", "differs", "unsure")
 
 # Why there is nothing to review here, and the two ways to have something: a review of a
@@ -295,6 +295,55 @@ def member_verdicts(u: dict, given) -> tuple[dict, list[str]]:
             why.append(f"the verdict {value!r} on {name} needs its detail")
             continue
         out[name] = {"group": group, "value": value, "detail": detail.strip()}
+    return out, why
+
+
+def changed_judgement(u: dict, blind: str | None, given) -> tuple[dict | None, list[str]]:
+    """A judgement the reviewer changed after the author's review was shown, as the report keeps
+    it beside the blind verdict (`changed_judgement`: `reason` and the revised `verdict`,
+    `{group, value, detail}`, or None when they name none), and what is wrong with `given`
+    (`{reason, verdict, detail}`). The reason is required; a revised verdict is one of the
+    unit's, other than the blind one (`blind`), with the detail it needs (`detail_asked`). None
+    when nothing is given. The review page applies the same rule (`changedJudgement` in
+    `web/src/lib/review.js`; tests/fixtures/review/changed-judgement.json holds both to it)."""
+    given = given if isinstance(given, dict) else {}
+    why: list[str] = []
+
+    def text(k: str, what: str) -> str:
+        v = given.get(k)
+        if v is None or isinstance(v, str):
+            return (v or "").strip()
+        why.append(f"{what} is not text")
+        return ""
+
+    reason, verdict = text("reason", "the reason"), text("verdict", "the revised verdict")
+    detail = text("detail", "the revised verdict's detail")
+    if not (reason or verdict or detail or why):
+        return None, []
+    if not reason:
+        why.append("a changed judgement says why it changed: give the reason")
+    out = {"reason": reason, "verdict": None}
+    if detail and not verdict:
+        why.append("a detail belongs to a revised verdict: name the verdict too")
+    if verdict:
+        group = verdict_group(u, verdict)
+        table = STEP_VERDICTS if u.get("kind") == "step" else VERDICTS
+        if group is None:
+            why.append(f"the revised verdict {verdict!r} is not one of: "
+                       + ", ".join(v for vs in table.values() for v in vs))
+        elif verdict in REFUTE_ONLY and not u.get("refute"):
+            why.append(f"{verdict!r} applies only to a unit with a refutation")
+        elif verdict in CORRECTION_ONLY and not u.get("correction"):
+            why.append(f"{verdict!r} applies only to a correction or a special case of a "
+                       "printed clause")
+        elif verdict == blind:
+            why.append(f"{verdict!r} is the verdict recorded before the author's review: a "
+                       "changed judgement names another verdict, or only its reason")
+        elif detail_asked(u, verdict) and not detail:
+            asked = detail_asked(u, verdict)
+            why.append(f"the revised verdict {verdict!r} needs its detail: "
+                       f"{asked[0].lower()}{asked[1:]}")
+        out["verdict"] = {"group": group, "value": verdict, "detail": detail}
     return out, why
 
 
@@ -626,7 +675,9 @@ class Session:
             raise ReviewError(f"{uid}: the reading is already locked", "order")
         return d, self.revealed_by(u)
 
-    def read(self, uid: str, as_json: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+        """Step 1: the unit's passages; with `context`, each with the paper around it
+        (`with_context`)."""
         u = self.unit(uid)
         _, seen = self.begin(uid)
         warn = ("\n\nNOTE: you have already seen " + " and ".join(
@@ -635,11 +686,30 @@ class Session:
         reveals = self.would_reveal(u)
         if reveals:
             warn += "\n\n" + reveals_note(reveals, "Step 2 of this unit (`review show`) will show")
+        pk = self.packet(u, "read")
+        if context:
+            self.with_context(pk)
         if as_json:
-            return {**self.packet(u, "read"), "review": {"step": "read", "mode": self.mode,
-                                                         "seen_before": seen,
-                                                         "reveals": reveals}}
-        return self.paper_text(u) + warn
+            return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
+                                     "reveals": reveals}}
+        return cmp.packet_text(pk) + warn
+
+    def with_context(self, pk: dict) -> dict:
+        """The read step's packet `pk` with, on each passage, the paper around it
+        (`surroundings`, `passage_context.py`), read from the build's copy of the paper's
+        source. A review snapshot holds the passages only, so a review of one has none."""
+        from .passage_context import surroundings
+        chunks = [ch for ch in (self.site.chunk(p["claim"]) for p in pk["paper"]["passages"])
+                  if ch is not None]
+        got = surroundings(self.site, chunks, self.work_dir / "sources", self.work_dir / "build",
+                           "a review snapshot holds the passages the steps show, not the rest "
+                           "of the paper's source: read their context in the paper"
+                           if self.evidence else None)
+        for p in pk["paper"]["passages"]:
+            if p["claim"] in got:
+                p["surroundings"] = got[p["claim"]]
+        pk["paper"]["context"] = "requested"
+        return pk
 
     def _started(self, u: dict) -> dict:
         """An informed session's draft of `u`, begun now if there is none: its steps need no
@@ -815,6 +885,11 @@ class Session:
                            + (f" by {note['by']}" if note.get("by") else "") + f"\n{text}")
         out = out or ["No review by the author is recorded for this unit."]
         out += self._account(u) + self._refutation_scope(u)
+        # What the verdict just recorded means for the claim (#685).
+        out += [r.get("line") or rq.refutation_line(r) for r in u.get("refuted_by") or []]
+        if u.get("kind") == "step":
+            out += [proposal_text(p) for p in [self.site.proposal(c["id"])
+                                               for c in u.get("claims") or []] if p]
         return "\n\n".join(out)
 
     def _account(self, u: dict) -> list[str]:
@@ -833,10 +908,13 @@ class Session:
         return [f"Scope of the refutation of {s['claim']}, as its author records it\n"
                 + "\n".join(s["lines"]) for s in u.get("refutation_scope") or []]
 
-    def submit(self, uid: str, disagreements: str) -> dict:
+    def submit(self, uid: str, disagreements: str, changed: dict | None = None) -> dict:
         """The report, from the draft. Independent review submits after the author's review was
         shown; an informed session once a verdict is recorded. The report lists what the
-        reviewer had seen before the reading was recorded, or, with no reading, before now."""
+        reviewer had seen before the reading was recorded, or, with no reading, before now.
+        `changed` is a judgement the reviewer changed after the author's review
+        (`changed_judgement`), kept beside the blind verdict, which stays as it was recorded;
+        an informed session records its verdict again instead, until it submits."""
         u = self.unit(uid)
         if self.informed:
             d = self.draft(u)
@@ -847,11 +925,33 @@ class Session:
             if "author_shown_at" not in d:
                 raise ReviewError(f"{uid}: read the author's review first (`review author`)",
                                   "order")
+        # A changed judgement the draft keeps (typed on the review page, or given back by Undo)
+        # stands unless another is given: dropping it would let the blind verdict pass silently.
+        prev = d.get("changed") if isinstance(d.get("changed"), dict) else {}
+        given = changed if changed is not None else \
+            {k: prev.get(k) for k in ("reason", "verdict", "detail")}
+        cj, why = changed_judgement(u, d.get("verdict"), given)
+        if cj and self.informed:
+            why = ["an informed review has no blind verdict to keep: record the verdict again "
+                   "(`review decide`) until the report is submitted"]
+        if why:
+            raise ReviewError("; ".join(why), "invalid")
         # What reached this working directory after the lock (an investigation imported since,
         # say) but was seen before it is part of what the reading was not blind to.
         seen = list(d.get("revealed_by") or [])
         seen += [s for s in self.revealed_by(u, before=d.get("locked_at")) if s not in seen]
         d["revealed_by"] = seen
+        if cj:
+            same = {k: (prev.get(k) or "").strip() for k in ("reason", "verdict", "detail")} == {
+                "reason": cj["reason"], "verdict": (cj["verdict"] or {}).get("value") or "",
+                "detail": (cj["verdict"] or {}).get("detail") or ""}
+            d["changed"] = {"reason": cj["reason"],
+                            "verdict": (cj["verdict"] or {}).get("value"),
+                            "detail": (cj["verdict"] or {}).get("detail") or "",
+                            "recorded_at": prev.get("recorded_at") if same and
+                            prev.get("recorded_at") else now()}
+        else:
+            d.pop("changed", None)
         r = report(self.index, u, d, self.reviewer, disagreements or "none", self.mode,
                    self.evidence)
         self.work["reports"].append(r)
@@ -878,6 +978,20 @@ class Session:
                 if v is not None and not (isinstance(v, dict) and all(
                         x is None or isinstance(x, str) for x in v.values())):
                     raise ReviewError("a bridge is {theorem, target}", "invalid")
+            elif k == "changed":
+                if v is not None and not (isinstance(v, dict) and set(v) <= {
+                        "reason", "verdict", "detail", "recorded_at"} and all(
+                        x is None or isinstance(x, str) for x in v.values())):
+                    raise ReviewError("a changed judgement is {reason, verdict, detail}",
+                                      "invalid")
+                if v is not None:
+                    # Its time is the engine's: kept while it is the judgement Undo gave back.
+                    v = {x: v.get(x) for x in ("reason", "verdict", "detail")}
+                    old = d.get("changed") if isinstance(d.get("changed"), dict) else {}
+                    if old.get("recorded_at") and all((old.get(x) or "") == (v.get(x) or "")
+                                                      for x in v):
+                        v["recorded_at"] = old["recorded_at"]
+                    fields[k] = v
             elif v is not None and not isinstance(v, str):
                 raise ReviewError(f"{k} is text", "invalid")
             elif isinstance(v, str) and len(v) > wsp.TEXT_CHARS:
@@ -910,7 +1024,9 @@ class Session:
             **({"members": v["members"]} if v.get("members") else {}),
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
-            "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or ""}
+            "author_shown_at": a.get("shown_at"), "disagreements": a.get("disagreements") or "",
+            **({"changed": changed_draft(r["changed_judgement"])}
+               if isinstance(r.get("changed_judgement"), dict) else {})}
         self.work["reports"].pop()
         self._save(uid, remove=r)
         return self.work["drafts"][uid]
@@ -936,6 +1052,19 @@ class Session:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(body, indent=2, ensure_ascii=False), encoding="utf-8")
         return out
+
+
+def proposal_text(p: dict) -> str:
+    """A proof step's author's proposed verdict (`steps.proposal`), for step 3: the verdict, the
+    note and the theorem it names, which is the author's and not checked by Lean here. It
+    completes no review and changes no status (#678)."""
+    return (f"The author's proposed verdict on this step" + (f", by {p['by']}" if p.get("by")
+                                                            else "")
+            + f": {p.get('verdict')}" + (f". {p['note']}" if p.get("note") else "")
+            + (f"\nIt names {p['theorem']} (the author's; Lean does not check it here)."
+               if p.get("theorem") else "")
+            + "\nA proposal completes no review: your verdict is the review, and a different "
+              "conclusion goes in your response to the author or a finding.")
 
 
 def reveals_note(units: list[str], lead: str) -> str:
@@ -1075,7 +1204,7 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
         elif action == "author":
             s.author(uid)
         elif action == "submit":
-            out["report"] = s.submit(uid, req.get("disagreements") or "")
+            out["report"] = s.submit(uid, req.get("disagreements") or "", req.get("changed"))
         elif action == "undo":
             s.undo()
         elif action == "expose":
@@ -1178,8 +1307,32 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
         # Recorded with the verdict; None when the reviewer recorded no coverage.
         "correspondence": d.get("correspondence"),
         "author_review": {"shown_at": d.get("author_shown_at"), "disagreements": disagreements},
+        # What the verdict means for the claim, as the build records it: a theorem named as
+        # refuting the proposition (#685).
+        **({"refuted_by": u["refuted_by"]} if u.get("refuted_by") else {}),
+        # A judgement changed after the author's review: beside the blind verdict, never in it.
+        **({"changed_judgement": changed_record(u, d["changed"])}
+           if isinstance(d.get("changed"), dict) and d["changed"].get("reason") else {}),
         "submitted_at": now(),
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
                                    d.get("correspondence")),
         **({"evidence": evidence} if evidence else {}),
     }
+
+
+def changed_record(u: dict, c: dict) -> dict:
+    """A report's `changed_judgement`, from the draft's `changed` that `Session.submit` checked:
+    the reason, the revised verdict (`{group, value, detail}`, or None) and when it was
+    recorded."""
+    v = c.get("verdict")
+    return {"reason": c.get("reason") or "",
+            "verdict": {"group": verdict_group(u, v), "value": v, "detail": c.get("detail") or ""}
+            if v else None,
+            "recorded_at": c.get("recorded_at")}
+
+
+def changed_draft(cj: dict) -> dict:
+    """The draft's `changed` that gives a report's `changed_judgement` again (Undo)."""
+    v = cj.get("verdict") or {}
+    return {"reason": cj.get("reason") or "", "verdict": v.get("value"),
+            "detail": v.get("detail") or "", "recorded_at": cj.get("recorded_at")}

@@ -448,7 +448,49 @@ export function draftFromReport(r) {
     correspondence: r.correspondence ?? null,
     lean: leanOf(pins),
     author_shown_at: a.shown_at ?? null, disagreements: a.disagreements || "",
+    ...(r.changed_judgement ? { changed: changedDraft(r.changed_judgement) } : {}),
   };
+}
+
+// The draft's `changed` that gives a report's `changed_judgement` again (`review_cli.changed_draft`).
+export function changedDraft(cj) {
+  const v = cj.verdict || {};
+  return { reason: cj.reason || "", verdict: v.value ?? null, detail: v.detail || "", recorded_at: cj.recorded_at ?? null };
+}
+
+// A judgement the reviewer changed after the author's review was shown, as the report keeps it
+// beside the blind verdict `blind` (`{reason, verdict}`, the revised verdict `{group, value,
+// detail}` or null), and what is wrong with `given` (`{reason, verdict, detail}`): the reason is
+// required, and a revised verdict is one of the unit's other than the blind one, with the detail
+// it needs. `judgement` is null when nothing is given. The engine applies the same rule
+// (`review_cli.changed_judgement`; tests/fixtures/review/changed-judgement.json holds both to it).
+export function changedJudgement(unit, blind, given) {
+  const g = given && typeof given === "object" ? given : {};
+  const problems = [];
+  const text = (k, what) => {
+    const v = g[k];
+    if (v == null || typeof v === "string") return String(v || "").trim();
+    problems.push(`${what} is not text`);
+    return "";
+  };
+  const reason = text("reason", "the reason"), verdict = text("verdict", "the revised verdict");
+  const detail = text("detail", "the revised verdict's detail");
+  if (!reason && !verdict && !detail && !problems.length) return { judgement: null, problems };
+  if (!reason) problems.push("a changed judgement says why it changed: give the reason");
+  const judgement = { reason, verdict: null };
+  if (detail && !verdict) problems.push("a detail belongs to a revised verdict: name the verdict too");
+  if (verdict) {
+    const table = unit.kind === "step" ? STEP_VERDICTS : VERDICTS;
+    const group = Object.keys(table).find((g) => table[g].some((v) => v.value === verdict)) || null;
+    const asked = needsDetail(verdict, unit.kind);
+    if (!group) problems.push(`the revised verdict '${verdict}' is not one of: ${Object.values(table).flat().map((v) => v.value).join(", ")}`);
+    else if (verdict === "refutation not valid" && !unit.refute) problems.push(`'${verdict}' applies only to a unit with a refutation`);
+    else if (verdict === "faithful to the correction" && !unit.correction) problems.push(`'${verdict}' applies only to a correction or a special case of a printed clause`);
+    else if (verdict === blind) problems.push(`'${verdict}' is the verdict recorded before the author's review: a changed judgement names another verdict, or only its reason`);
+    else if (asked && !detail) problems.push(`the revised verdict '${verdict}' needs its detail: ${asked.charAt(0).toLowerCase()}${asked.slice(1)}`);
+    judgement.verdict = { group, value: verdict, detail };
+  }
+  return { judgement, problems };
 }
 
 // Takes back the reviewer's last report in `work`, as `Session.undo` does: its unit returns to
@@ -472,6 +514,8 @@ export function buildReport({ index, unit, draft, reviewer }) {
   // with the verdict, or kept by Undo from the report), else, for a draft saved before the verdict
   // recorded it, the unit's.
   const lean = draft.lean || unit;
+  const cj = changedJudgement(unit, verdict, draft.changed).judgement;
+  const changed = cj?.reason ? { ...cj, recorded_at: draft.changed.recorded_at ?? now() } : null;
   return {
     schema: REPORT_SCHEMA,
     // The page's own protocol is independent review; an informed session's reports are made by
@@ -506,6 +550,11 @@ export function buildReport({ index, unit, draft, reviewer }) {
     // Recorded with the verdict (`reportCorrespondence`); null when the reviewer recorded no coverage.
     correspondence: draft.correspondence ?? null,
     author_review: { shown_at: draft.author_shown_at, disagreements: draft.disagreements || "none" },
+    // What the verdict means for the claim, as the build records it: a theorem named as refuting
+    // the proposition (`review_cli.report`, #685).
+    ...(unit.refuted_by?.length ? { refuted_by: unit.refuted_by } : {}),
+    // A judgement changed after the author's review: beside the blind verdict, never in it.
+    ...(changed ? { changed_judgement: changed } : {}),
     submitted_at: now(),
     issue_draft: issueDraft(unit, verdict, draft.detail, draft.correspondence ?? null),
   };

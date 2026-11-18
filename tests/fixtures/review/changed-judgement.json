@@ -1,0 +1,207 @@
+{
+ "note": "A judgement changed after the author's review, as the reader (web/src/lib/review.js changedJudgement) and the command line (review_cli.changed_judgement) must both record it or refuse it, for synthetic units: the reason is required, a revised verdict is one of the unit's other than the blind one, with the detail it needs.",
+ "units": {
+  "statement": {
+   "id": "spec:Syn.PaperSpec.p",
+   "kind": "spec",
+   "name": "Syn.PaperSpec.p"
+  },
+  "refuted": {
+   "id": "spec:Syn.PaperSpec.q",
+   "kind": "spec",
+   "name": "Syn.PaperSpec.q",
+   "refute": true
+  },
+  "step": {
+   "id": "step:S:eq:one",
+   "kind": "step",
+   "name": "Equation (1)"
+  }
+ },
+ "cases": [
+  {
+   "name": "nothing changed",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {},
+   "judgement": null
+  },
+  {
+   "name": "nothing typed",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "  ",
+    "verdict": null,
+    "detail": ""
+   },
+   "judgement": null
+  },
+  {
+   "name": "a reason alone",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "The author's account shows the bound is for n >= 1 only.",
+    "verdict": null,
+    "detail": ""
+   },
+   "judgement": {
+    "reason": "The author's account shows the bound is for n >= 1 only.",
+    "verdict": null
+   }
+  },
+  {
+   "name": "a revised verdict with its detail",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "The paper's n starts at 1.",
+    "verdict": "narrower",
+    "detail": "Lean adds n >= 1."
+   },
+   "judgement": {
+    "reason": "The paper's n starts at 1.",
+    "verdict": {
+     "group": "problem",
+     "value": "narrower",
+     "detail": "Lean adds n >= 1."
+    }
+   }
+  },
+  {
+   "name": "a revised verdict that needs no detail",
+   "unit": "statement",
+   "blind": "broader",
+   "given": {
+    "reason": "The instantiation was not needed.",
+    "verdict": "faithful"
+   },
+   "judgement": {
+    "reason": "The instantiation was not needed.",
+    "verdict": {
+     "group": "matches",
+     "value": "faithful",
+     "detail": ""
+    }
+   }
+  },
+  {
+   "name": "no reason",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "verdict": "mismatched",
+    "detail": "It states another bound."
+   },
+   "refused": true
+  },
+  {
+   "name": "no detail where the verdict needs one",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "verdict": "narrower"
+   },
+   "refused": true
+  },
+  {
+   "name": "the blind verdict again",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "verdict": "faithful"
+   },
+   "refused": true
+  },
+  {
+   "name": "a detail without a verdict",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "detail": "d"
+   },
+   "refused": true
+  },
+  {
+   "name": "not a verdict",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "verdict": "probably fine"
+   },
+   "refused": true
+  },
+  {
+   "name": "a refutation's verdict for a unit with none",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "verdict": "refutation not valid",
+    "detail": "d"
+   },
+   "refused": true
+  },
+  {
+   "name": "a refutation's verdict for a refuted unit",
+   "unit": "refuted",
+   "blind": "faithful",
+   "given": {
+    "reason": "r",
+    "verdict": "refutation not valid",
+    "detail": "It refutes a stronger claim."
+   },
+   "judgement": {
+    "reason": "r",
+    "verdict": {
+     "group": "problem",
+     "value": "refutation not valid",
+     "detail": "It refutes a stronger claim."
+    }
+   }
+  },
+  {
+   "name": "a step's own verdicts",
+   "unit": "step",
+   "blind": "holds as printed",
+   "given": {
+    "reason": "The case k = 0 fails.",
+    "verdict": "false as printed",
+    "detail": "At k = 0 it reads 1 <= 0."
+   },
+   "judgement": {
+    "reason": "The case k = 0 fails.",
+    "verdict": {
+     "group": "problem",
+     "value": "false as printed",
+     "detail": "At k = 0 it reads 1 <= 0."
+    }
+   }
+  },
+  {
+   "name": "a statement's verdict for a step",
+   "unit": "step",
+   "blind": "holds as printed",
+   "given": {
+    "reason": "r",
+    "verdict": "narrower",
+    "detail": "d"
+   },
+   "refused": true
+  },
+  {
+   "name": "a reason that is not text",
+   "unit": "statement",
+   "blind": "faithful",
+   "given": {
+    "reason": 3
+   },
+   "refused": true
+  }
+ ]
+}

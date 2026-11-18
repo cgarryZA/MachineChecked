@@ -93,6 +93,10 @@ def paper(tmp_path):
             ch["step"] = {"unit": "proof-equation",
                           "parent": {"id": "S:thm:t2", "number": "Theorem 2"}}
             ch["context_tex"] = "\n".join(CONTEXT)
+        if i == 5:
+            # Cut from a longer passage: the line it states, its own pin (#671).
+            ch["states"] = {"file": "main.tex", "start_line": lines[5] + 1,
+                            "end_line": lines[5] + 1, "text": theorem(5).split("\n")[1]}
         if i == 4:
             ch["source_parts"] = [
                 {"file": "main.tex", "start_line": lines[4], "end_line": lines[4] + 3,
@@ -152,6 +156,13 @@ def test_a_snapshot_without_the_text_holds_no_line_of_the_source(paper, tmp_path
     assert by["statement_tex"]["form"] == "whitespace" and norm_ws(raw[a:b].decode()) == body(4)
     a, b = by["part0"]["bytes"]
     assert by["part0"]["form"] == "text" and raw[a:b].decode() == theorem(4).rstrip("\n")
+    # The part a claim states is left out and found again like the other texts.
+    ch5 = json.loads((snap / "data" / "claims" / "S_thm_t5.json").read_text())
+    assert ch5["states"] == {"file": "main.tex", "start_line": ch5["states"]["start_line"],
+                             "end_line": ch5["states"]["start_line"], "text": None}
+    (own,) = [r for r in refs["claims"]["claims/S_thm_t5.json"] if r["at"] == ["states", "text"]]
+    a, b = own["bytes"]
+    assert own["form"] == "text" and raw[a:b].decode() == theorem(5).split("\n")[1]
     (ctx,) = [r for r in refs["claims"]["claims/S_thm_t3.json"] if r["at"] == ["context_tex"]]
     a, b = ctx["bytes"]
     assert ctx["file"] == "proof.tex" and (src / "proof.tex").read_bytes()[a:b] == \
@@ -242,6 +253,8 @@ def test_review_reads_from_the_source_what_a_snapshot_with_the_text_shows(paper,
                 given=[f"S={tmp_path / 'eprint.tar.gz'}"])
     assert got == expected
     assert "Statement 4: for every natural number" in got[1] and "Fix the order" in got[1]
+    # The part claim t5 states is read again from the source, and marked as it.
+    assert "This unit states line" in got[1] and "Statement 5: for every natural number" in got[1]
     # The source given is kept for the later steps, and each step says where the text is from.
     out, err = review(capsys, tmp_path / "wb", tmp_path / "without.zip", "status")
     assert err == (f"note: the passages of paper S are read from arXiv {ARXIV}, each checked "

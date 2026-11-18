@@ -45,6 +45,12 @@ used instead:
 `reviewed_composition`, `checked_bridge`). A step with no `lean` keeps only an `unresolved`
 coverage, whose open question may be whether any Lean states the step, and no basis.
 `route.lean` lists declarations that reach the parent by another argument. The probe checks both (as `link` records, `lean.links` in the evidence).
+A step's entry may also record the verdict its author proposes, `proposed`: `{verdict, note,
+theorem, by}`, with `verdict` one of the step verdicts and `theorem` a Lean name that is the
+author's and not checked by Lean. The links file takes the same field under the step's label. The
+site writes it to `data/proposals/<claim file>` (`machinechecked/step-proposal@1`: `{claim, unit,
+proposed}`), never into the claim record, so that a review page fetches it only after its
+verdict ([Proof steps](REVIEWING.md#proof-steps)).
 None of these fields is an input to a status: a step's status is its scope decision's, and its
 review is its own (below).
 
@@ -93,7 +99,14 @@ digests are missing or differ from the current ones. Its Lean pins (`fingerprint
 `fingerprints`, `legacy_hash`) are those of the unit when the verdict was recorded. A report on
 a structure's unit lists the structure and the constructor and projections it covers in
 `unit.lean`, pins each one's fingerprint in `pins.fingerprints`, and records any separate verdict
-on one of them in `verdict.members` (name to `{group, value, detail}`). Its `mode`
+on one of them in `verdict.members` (name to `{group, value, detail}`). A report whose
+reviewer changed their judgement after the author's review keeps the blind `verdict` as it was
+recorded and, beside it, `changed_judgement`: `{reason, verdict, recorded_at}`, with `verdict`
+the revised one (`{group, value, detail}`) or null; `review promote` never promotes it, and in
+zero configuration it is not counted. A report on a proposition that a clause of its claim
+refutes records `refuted_by`, as the build gave it when the report was submitted: each
+`{claim, clause, theorem, checked, line}`, the clause by its place and `line` the sentence step 3
+shows; it changes nothing promotion checks. Its `mode`
 is `independent` (the three steps, each locked) or `informed` (made in an informed workspace: no
 step is locked, `reading.text` is empty and `reading.locked_at` null when the reviewer recorded
 no reading, and `reading.revealed_by` lists the workspace's exposure); a report without `mode`
@@ -137,7 +150,8 @@ or a paper read from its PDF), or, when its text is left out, `{"included": fals
 paper's folder in the project) and `{"kind": "git", "revision"}`, and `files` each file of the
 source a passage comes from with its SHA-256. A snapshot that leaves out a paper's text has the
 schema `prooflens/review-snapshot@2`. Its claim records of that paper hold `null` for each text of
-the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`) and
+the source (`statement_tex`, `context_tex`, `anchor.statement`, each `source_parts[].text`,
+`states.text`) and
 for `excerpt`, and `data/paper-sources.json` (`prooflens/paper-sources@1`) says where each text
 is: `claims` maps a claim record (`claims/….json`) to a list of `{at, paper, file, bytes, form,
 sha256}`, with `at` the field's path in the record, `bytes` (`[start, end]`) the range of the file,
@@ -571,7 +585,10 @@ findings counts, and the [semantic summary](#semantic-summary-prooflenssemantic-
 ([below](#published-workspace-records-prooflenspublished-work1-written-by-the-export)). `data/claims/<file>.json` holds one passport: the printed statement
 (`statement_tex`: a statement environment's body, or the pinned passage of a claim located by
 line, each read from the source file that holds it, also when the main file `\input`s or
-`\include`s its sections; and its display `excerpt`, when the paper publishes its source text), each
+`\include`s its sections; and its display `excerpt`, when the paper publishes its source text),
+for a claim located by line whose statement is a longer passage it shares (one display of a
+remark), `states`: its own pinned region (`file`, `start_line`, `end_line`, `text`; review packets
+only, not published), each
 clause's unfolded statement, proofs, witness, regimes, reviews and structured `evidence`, the
 declarations of its closure, and its findings. A clause also lists `witness_defs`, the
 declarations only its witnesses use that carry data (proofs and the tactic scripts of tactic

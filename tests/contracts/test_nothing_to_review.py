@@ -2,7 +2,8 @@
 proposition (in a definition claim, no proposition and no definition) has nothing to review and
 is never reviewed. Its claim reads "not reviewed" and is not counted among reviewed claims, in
 the assessment, `check`, `check --json`, the semantic summary and the reader's data; a claim
-with a reviewed proposition still reads as reviewed, and no status word changes."""
+with a reviewed proposition still reads as reviewed. A formal claim none of whose clauses names a
+proposition reads "formal: unspecified" (#762)."""
 
 import json
 import subprocess
@@ -72,10 +73,10 @@ def test_a_clause_with_no_proposition_is_never_reviewed():
     assert got["P:def-ok"]["clauses"][0]["review"] == "reviewed"
 
 
-def test_the_status_words_are_unchanged_and_never_rounded_up():
+def test_the_status_words_are_never_rounded_up():
     got = {cid: c["status_code"] for cid, c in assess().items()}
-    assert got == {"P:none": "formal.open", "P:ok": "formal.accepted",
-                   "P:mixed": "formal.open.partial", "P:defs-only": "formal.open",
+    assert got == {"P:none": "formal.unspecified", "P:ok": "formal.accepted",
+                   "P:mixed": "formal.open.partial", "P:defs-only": "formal.unspecified",
                    "P:def-empty": "definition.review-pending",
                    "P:def-ok": "definition.reviewed"}
 
@@ -126,7 +127,8 @@ def test_the_toy_paper_counts_no_review_of_a_claim_without_a_proposition(toy):
     out = json.loads(run.stdout)
     claims = {c["id"]: c for c in out["claims"]}
     new = claims["T:thm:new"]
-    assert new["status"] == "formal: open"
+    # No clause names a proposition: nothing is open (#762).
+    assert (new["status"], new["status_code"]) == ("formal: unspecified", "formal.unspecified")
     assert new["semantic"]["declarations"] == 0
     assert new["semantic"]["review"] == "none"
     # Theorem 2.1, whose proposition an independent reviewer read, is the only one counted so.
@@ -134,15 +136,20 @@ def test_the_toy_paper_counts_no_review_of_a_claim_without_a_proposition(toy):
     review = out["semantic"]["papers"]["T"]["review"]["statements"]
     assert review["independent"] == 1
 
+    assert out["semantic"]["papers"]["T"]["formal"]["statements"]["formal.unspecified"] == 1
+
     text = _check(toy).stdout
     assert "reviews: current, independent (1);" in text
+    assert "     1  formal: unspecified" in text.splitlines()
     view = _check(toy, "--claim", "T:thm:new").stdout
     assert "    review: pending" in view and "review: reviewed" not in view
+    assert "  status: formal: unspecified" in view.splitlines()
 
     # The reader's data: the clause's review rung and the claim's evidence summary.
     data = toy / ".machinechecked" / "site" / "data"
     index = json.loads((data / "index.json").read_text())
     row = next(c for c in index["claims"] if c["id"] == "T:thm:new")
+    assert row["status_code"] == "formal.unspecified"
     assert [e["review"] for e in row["evidence_summary"]] == [{"state": "pending"}]
     assert row["semantic"]["review"] == "none"
     chunk = json.loads((data / "claims" / row["file"]).read_text())

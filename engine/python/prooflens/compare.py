@@ -221,6 +221,18 @@ class Site:
                    nb.inventory(claims, True)["statements"])
         return refs
 
+    def proposal(self, cid: str) -> dict | None:
+        """The verdict the author proposes for proof step `cid` (`steps.proposal`), kept apart
+        from its record (`data/proposals/<file>`); None when there is none. For the informed
+        stage only: the read and compare stages never read it."""
+        meta = self._by_id.get(cid)
+        p = self.data / "proposals" / meta["file"] if meta else None
+        try:
+            rec = json.loads(p.read_text(encoding="utf-8")) if p and p.is_file() else None
+        except ValueError:
+            return None
+        return rec.get("proposed") if isinstance(rec, dict) else None
+
     def part(self, key: str) -> dict | None:
         """A part stored on its own under its key (`data/expansions/<key>.json`,
         `manifest.split_expansions`): a definition expanded at an application, or a page of a
@@ -303,6 +315,15 @@ def passage(ch: dict, stage: str) -> dict:
         text = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", text)).strip()
         removed.append("the paper's \\lean{...} tags, which name Lean declarations")
     out.update(available=True, text=text, quality=quality, complete=complete)
+    own = ch.get("states")
+    if isinstance(own, dict) and isinstance(own.get("text"), str):
+        # A claim cut from a longer passage: the lines it states, which its pin holds; the
+        # rest of the passage is its context.
+        part = own["text"]
+        if stage == "read" and LEAN_TAGS.search(part):
+            part = re.sub(r"[ \t]{2,}", " ", LEAN_TAGS.sub("", part)).strip()
+        out["states"] = {**{k: own.get(k) for k in ("file", "start_line", "end_line")},
+                         "text": part}
     if parts:
         if stage == "read":
             for part in parts:
@@ -684,6 +705,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
                                    "no declaration is linked to this claim")
     if stage == "informed":
         out["interpretations"] = _informed(ch)
+        if ch.get("step"):
+            out["interpretations"]["proposed"] = site.proposal(ch["id"])
         if reading is not None:
             reading = dict(reading)
             out["interpretations"]["compositions"] = reading.pop("compositions", [])
@@ -802,6 +825,10 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
         out["interpretations"] = {"author_review": unit.get("author_review") or [],
                                   "account": unit_account(unit, chunks),
                                   "refutation_scope": unit.get("refutation_scope") or [],
+                                  "refuted_by": unit.get("refuted_by") or [],
+                                  # A proof step's author's proposed verdict (#678).
+                                  **({"proposed": site.proposal(chunks[0]["id"])
+                                      if chunks else None} if unit["kind"] == "step" else {}),
                                   "claims": [_informed(ch) for ch in chunks]}
         sections.append("interpretations")
     out["retrieval"] = _retrieval(stage, sections, page, extra, outcome=unit["kind"] == "spec")
@@ -1241,6 +1268,13 @@ def passage_text(p: dict) -> str:
     how = p["quality"] + (", approximate position" if src.get("position") == "approximate"
                           else "")
     body = f"{head}\n{p['text']}\n  ({how}" + (f"; {where}" if where else "") + ")"
+    own = p.get("states")
+    if own:
+        lines = (f"lines {own['start_line']}-{own['end_line']}"
+                 if own.get("end_line") != own.get("start_line") else f"line {own['start_line']}")
+        body = (f"{head}\nThis unit states {lines} of {own['file']}, the part its pin holds:\n"
+                f"{own['text']}\nThe whole passage it is part of, as context:\n{p['text']}\n"
+                f"  ({how}" + (f"; {where}" if where else "") + ")")
     if not p.get("complete"):
         body += f"\n  INCOMPLETE: {p['reason']}"
     for k, part in enumerate(p.get("parts") or [], start=1):
@@ -1255,6 +1289,9 @@ def passage_text(p: dict) -> str:
                 f" ({par.get('id') or 'no parent recorded'}). {p['step']['question']}\n" + body)
         if p.get("context"):
             body += "\nIts context in the proof:\n" + p["context"]
+    if p.get("surroundings"):
+        from .passage_context import lines_of
+        body += "\n" + "\n".join(lines_of(p["surroundings"]))
     return body
 
 

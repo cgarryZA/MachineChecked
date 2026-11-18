@@ -1,11 +1,14 @@
-"""Claims of a paper that is only a PDF: its numbered statements, found by styled headings.
+"""Claims of a paper that is only a PDF: its numbered statements, found by their headings.
 
 A typeset theorem starts with its head in bold ("Lemma 8.6."), which distinguishes it from a
 reference to it in the text ("by Lemma 8.6"). The PDF is read with poppler's `pdftohtml -xml`,
 which keeps bold runs and positions. Each claim is placed from its head to the next head or
 proof on the same page; the end is an estimate (a PDF does not record where a statement ends),
-so its anchor is `approximate`. Remark-like heads may be italic. These are typography
-heuristics, not a guarantee that every statement in an arbitrary PDF will be found.
+so its anchor is `approximate`. Remark-like heads may be italic. A PDF with no styled head, as
+many journals set them, is read by its paragraphs instead: a head is a statement kind and its
+number starting a paragraph, followed by the statement (`paragraph_heads`). Each anchor says
+which rule found it (`found_by`). These are typography heuristics, not a guarantee that every
+statement in an arbitrary PDF will be found.
 """
 
 from __future__ import annotations
@@ -24,6 +27,12 @@ KINDS = ("Theorem", "Lemma", "Proposition", "Corollary", "Definition", "Remark",
 NUMBER = r"(?:[A-Z](?:\.\d+)+|[A-Z]?\d+(?:\.\d+)*)[a-z]?"
 HEAD = re.compile(r"^(" + "|".join(KINDS) + r")\s+(" + NUMBER + r")\s*(\.|\(|$)")
 STOP = re.compile(r"^(Proof\b|\d+(\.\d+)*\s+[A-Z])")
+# A head in the body's weight: the kind and the number, an optional full stop, then the
+# statement, a parenthesised title or the end of the line ("Theorem 2.1 Suppose ...", "Lemma
+# A.3. Let ...", "Corollary 4.5 (Name)"). A reference that starts a line goes on in lowercase or
+# with punctuation ("Lemma 2.2 gives ...", "Theorem 2.1, which ...", "Lemma 1.2. is used").
+PLAIN_HEAD = re.compile(r"^(" + "|".join(KINDS) + r")\s+(" + NUMBER + r")(\.?)"
+                        r"(?=\s*$|\s+[A-Z(])")
 
 
 BOLD_FONT = re.compile(r"bold|black|heavy|semibold|demi|cmbx|-bd\b|bx\d", re.I)
@@ -119,6 +128,48 @@ def heading(line: dict):
     return None
 
 
+def starts_paragraph(lines: list[dict], i: int) -> bool:
+    """Whether line `i` starts a paragraph of its column: no line of the column is above it on
+    its page, there is more space above it than between the lines of a paragraph, it is
+    indented, or the line above it ends short of the column's right edge (a paragraph ended
+    there). The column is the lines of the page that overlap it horizontally."""
+    line = lines[i]
+    h = line["y1"] - line["y0"]
+    column = [l for l in lines if l["page"] == line["page"] and l["x0"] < line["x1"]
+              and line["x0"] < l["x1"]]
+    above = [l for l in column if l is not line and l["y1"] <= line["y0"] + 0.25 * h]
+    if not above:
+        return True
+    prev = max(above, key=lambda l: l["y0"])
+    if line["y0"] - prev["y1"] > 0.5 * h:
+        return True
+    left, right = min(l["x0"] for l in column), max(l["x1"] for l in column)
+    return line["x0"] > left + 0.5 * h or prev["x1"] < right - 2 * h
+
+
+def _with_next_run(lines: list[dict], i: int) -> str:
+    """Line `i`'s text, followed by the next run when that run goes on along the same line. A
+    head's words can be runs of their own whose tops differ (a small-caps "Lemma" and its
+    upright number), which `_lines` does not join."""
+    line = lines[i]
+    nxt = lines[i + 1] if i + 1 < len(lines) else None
+    if nxt is None or nxt["page"] != line["page"]:
+        return line["text"]
+    h = min(line["y1"] - line["y0"], nxt["y1"] - nxt["y0"])
+    overlap = min(line["y1"], nxt["y1"]) - max(line["y0"], nxt["y0"])
+    if overlap >= 0.5 * h and 0 <= nxt["x0"] - line["x1"] <= 1.5 * h:
+        return norm_ws(line["text"] + " " + nxt["text"])
+    return line["text"]
+
+
+def paragraph_heads(lines: list[dict]) -> list[tuple[int, re.Match]]:
+    """The heads of a PDF that sets none in bold or italic: each line that starts a paragraph
+    (`starts_paragraph`) with a statement kind and its number, followed by the statement
+    (`PLAIN_HEAD`; the kind and the number may be runs of their own, `_with_next_run`)."""
+    return [(i, m) for i in range(len(lines))
+            if (m := PLAIN_HEAD.match(_with_next_run(lines, i))) and starts_paragraph(lines, i)]
+
+
 def page_heights(pdf: Path) -> dict[int, float]:
     """Each page's height in points, from `pdfinfo`."""
     r = subprocess.run(["pdfinfo", "-f", "1", "-l", "100000", str(pdf)], capture_output=True,
@@ -159,6 +210,9 @@ def claims_from_pdf(pdf: Path) -> tuple[list[dict], tuple[float, float] | None]:
         m = heading(l)
         if m:
             heads.append((i, m))
+    found_by = "styled"
+    if not heads:
+        heads, found_by = paragraph_heads(lines), "paragraph"
     anchors, seen = [], set()
     for k, (i, m) in enumerate(heads):
         kind, number = m.group(1).lower(), m.group(2)
@@ -190,5 +244,6 @@ def claims_from_pdf(pdf: Path) -> tuple[list[dict], tuple[float, float] | None]:
             "begin": [lines[i]["page"], 0, round(lines[i]["y0"], 2)],
             "head": None,
             "end": [lines[i]["page"], 0, round(end["y1"], 2)],
-            "statement": statement, "source_sha256": sha256_text(statement), "kind": "pdf"})
+            "statement": statement, "source_sha256": sha256_text(statement), "kind": "pdf",
+            "found_by": found_by})
     return anchors, size
