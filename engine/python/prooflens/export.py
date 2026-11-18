@@ -191,7 +191,7 @@ def public_claim(chunk: dict, pub) -> dict:
             # A review of a Lean statement quotes it: its text needs the Lean published too.
             c["spec_review"] = _reviews(cl["spec_review"], pub.reviews and pub.lean)
         if "def_reviews" in cl:
-            c["def_reviews"] = {n: _pick(r, ["state", "by", "kind"])
+            c["def_reviews"] = {n: _pick(r, ["state", "by", "kind", "accepted_family"])
                                 for n, r in cl["def_reviews"].items()}
         clauses.append(c)
     out["clauses"] = clauses
@@ -250,7 +250,9 @@ def public_step(st: dict, pub) -> dict:
 def _reviews(r: dict | None, with_text: bool) -> dict | None:
     if r is None:
         return None
-    keys = ["target", "name", "hash", "by", "kind", "provenance"] + (["text"] if with_text else [])
+    # `accepted_family`: a model reviewer the maintainer accepted over the same-family rule.
+    keys = ["target", "name", "hash", "by", "kind", "provenance", "accepted_family"] + \
+        (["text"] if with_text else [])
     return {"state": r["state"], "current": [_pick(x, keys) for x in r.get("current", [])],
             "stale": [_pick(x, keys) for x in r.get("stale", [])]}
 

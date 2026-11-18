@@ -242,6 +242,31 @@ for (const c of SHAPE.claims) {
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
+// A model reviewer's declared family (#613). In zero configuration, a report by a model of unknown
+// family; in the toy's full assessment, a review the maintainer accepted over the same-family
+// rule, as the assessment reads it back (`accepted_family` on the record and on the clause's
+// review evidence).
+fs.cpSync(path.join(root, "basis"), path.join(root, "basisfamily"), { recursive: true });
+{
+  const c = SHAPE.claims.find((x) => x.id === "P:thm:layout");
+  const f = path.join(root, "basisfamily", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  chunk.reviews[0].reviewer = { id: "llm:synthetic-model", kind: "model", model: "synthetic-model", identity: "self-declared",
+                                same_family_as_author: "unknown" };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
+fs.cpSync(path.join(root, "toy"), path.join(root, "toyfamily"), { recursive: true });
+{
+  const c = TOY.claims.find((x) => x.id === "T:prop:pred");
+  const f = path.join(root, "toyfamily", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  const cl = chunk.clauses.find((x) => x.spec_review?.current?.length);
+  cl.spec_review.current[0] = { ...cl.spec_review.current[0], by: "llm:some-model", accepted_family: "unknown" };
+  cl.spec_review.accepted_family = "unknown";
+  cl.evidence.review = { ...cl.evidence.review, accepted_family: "unknown" };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
+
 // Synthetic display excerpts as the engine writes them (fixtures/make_excerpt.py).
 const excerpts = spawnSync(process.env.PYTHON || "python3", [path.join(here, "fixtures", "make_excerpt.py")], { encoding: "utf8" });
 if (excerpts.status !== 0) throw new Error(excerpts.stderr);
@@ -2230,6 +2255,25 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.equal(open.basis, "unspecified");
     assert.match(open.text, /^Unresolved/);
     assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
+  });
+
+  await check("a reviewer's declared model family is shown beside the review", width, async (pg) => {
+    await pg.goto(origin + `/basisfamily/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const summary = pg.locator("details.review > summary");
+    await summary.waitFor();
+    assert.match((await summary.textContent()).replace(/\s+/g, " "),
+      /by the AI model synthetic-model \(self-declared\), a model of unknown family, \d{4}-/);
+    // A review accepted over the same-family rule says so, beside the review and on its evidence.
+    await pg.goto(origin + `/toyfamily/#/r/${TOY.release}/read/T/${encodeURIComponent("T:prop:pred")}`);
+    await pg.waitForSelector(".claim-view h1");
+    const chip = pg.locator(".claim-view .chipbtn");
+    assert.match((await chip.textContent()).replace(/\s+/g, " "), /by a model of unknown family, accepted over the same-family rule/);
+    await chip.click();
+    const pill = pg.locator(".claim-view .details .review .pill.family");
+    await pill.waitFor();
+    assert.equal((await pill.textContent()).trim(), "a model of unknown family, accepted by the maintainer over the same-family rule");
+    assert.equal(await pill.getAttribute("data-family"), "unknown");
+    assert.equal(await pg.locator(".claim-view .details .review .pill.family").count(), 1, "only the review accepted so");
   });
 
   await check("a report whose judgement changed is listed in the audit details as not counted", width, async (pg) => {

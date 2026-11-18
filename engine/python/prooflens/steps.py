@@ -204,7 +204,10 @@ def marker_review(marks: list, claim_id: str, source_sha256: str | None,
         if m.verdict not in MARK:
             continue
         views.append({"reviewer": {"id": m.by, "kind": m.kind, "identity": m.provenance,
-                                   "author": m.by in authors},
+                                   "author": m.by in authors,
+                                   # A model reviewer accepted over the same-family rule.
+                                   **({"accepted_family": m.accepted_family}
+                                      if getattr(m, "accepted_family", None) else {})},
                       "verdict": {"value": MARK[m.verdict], "detail": ""},
                       "state": m.verdict, "text": m.text[:TEXT_CHARS], "file": m.file,
                       "line": m.line, "source_sha256": (m.source or {}).get(claim_id),

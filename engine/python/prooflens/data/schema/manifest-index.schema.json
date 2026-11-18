@@ -455,6 +455,14 @@
           "type": "integer",
           "minimum": 0
         },
+        "same_family": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unknown_family": {
+          "type": "integer",
+          "minimum": 0
+        },
         "author": {
           "type": "integer",
           "minimum": 0
@@ -841,6 +849,8 @@
         "review": {
           "enum": [
             "independent",
+            "same_family",
+            "unknown_family",
             "author",
             "informed",
             "stale",

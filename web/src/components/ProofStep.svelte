@@ -3,6 +3,7 @@
   import { evidenceView } from "../lib/presentation.js";
   import { href, withQuery } from "../lib/route.svelte.js";
   import { STEP_VERDICTS } from "../lib/review.js";
+  import { familyOf, familyWords, acceptedFamilyWords } from "../lib/semantic.js";
   import { readingWords } from "../lib/coverage.js";
   import { loadProposal } from "../lib/data.js";
 
@@ -24,8 +25,12 @@
   const LABEL = Object.fromEntries(Object.values(STEP_VERDICTS).flat().map((v) => [v.value, v.label]));
   function who(r) {
     const x = r.reviewer || {};
+    // A report gives a model's declared family; a promoted review, the family of a model the
+    // maintainer accepted over the same-family rule.
+    const fam = familyOf(x);
     return (x.kind === "model" ? "the AI model " + (x.model || x.id) : (x.name || x.id))
       + (x.identity === "self-declared" ? " (self-declared)" : "")
+      + (x.accepted_family ? ", " + acceptedFamilyWords(x.accepted_family) : fam ? ", " + familyWords(fam) : "")
       + (x.author ? ", an author of the statements" : "");
   }
   // When a review was made: its date, or where its marker is recorded.

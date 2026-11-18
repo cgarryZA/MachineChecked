@@ -23,6 +23,7 @@
   import ProofFacts from "./ProofFacts.svelte";
   import PublishedWork from "./PublishedWork.svelte";
   import { VERDICTS } from "../lib/review.js";
+  import { familyOf, familyWords, acceptedFamilyWords } from "../lib/semantic.js";
   import { occurrenceCount } from "../lib/symbolmarks.js";
   import { tick } from "svelte";
 
@@ -47,7 +48,9 @@
   function reviewer(r) {
     const who = r.reviewer.kind === "model" ? "the AI model " + (r.reviewer.model || r.reviewer.id)
       : (r.reviewer.name || r.reviewer.id);
-    return who + (r.reviewer.identity === "self-declared" ? " (self-declared)" : "");
+    // A model's declared family, which decides whether its review counts as independent.
+    const fam = familyOf(r.reviewer);
+    return who + (r.reviewer.identity === "self-declared" ? " (self-declared)" : "") + (fam ? ", " + familyWords(fam) : "");
   }
   let busy = $state(null);
   let saveError = $state(null);
@@ -393,7 +396,7 @@
         {#if cl.spec_review}
           {#each cl.spec_review.current as r}
             <div class="review">
-              <p class="small"><strong>{r.by}</strong> <span class="pill">{r.kind === "ai" ? "AI" : r.kind === "human" ? "human" : "kind not recorded"}</span> <span class="pill">{r.provenance}</span></p>
+              <p class="small"><strong>{r.by}</strong> <span class="pill">{r.kind === "ai" ? "AI" : r.kind === "human" ? "human" : "kind not recorded"}</span> <span class="pill">{r.provenance}</span>{#if r.accepted_family} <span class="pill family" data-family={r.accepted_family}>{acceptedFamilyWords(r.accepted_family)}</span>{/if}</p>
               {#if r.text}<pre class="rtext">{r.text}</pre>{/if}
             </div>
           {:else}
@@ -406,7 +409,7 @@
           <p class="small muted">Definitions its meaning depends on: {Object.entries(counts).map(([k, v]) => `${v} ${evidenceView("review", { state: k }).word}`).join(", ")}</p>
           {#if claim.scope === "definition"}
             {#each entries.filter(([, r]) => r.rests_on?.passages?.length) as [n, r]}
-              <p class="faint small rests-on"><code>{n}</code>: the review by {r.rests_on.by} at <code>{r.rests_on.file}:{r.rests_on.line}</code>, which read {r.rests_on.passages.join(", ")}</p>
+              <p class="faint small rests-on"><code>{n}</code>: the review by {r.rests_on.by}{r.rests_on.accepted_family ? ", " + acceptedFamilyWords(r.rests_on.accepted_family) + "," : ""} at <code>{r.rests_on.file}:{r.rests_on.line}</code>, which read {r.rests_on.passages.join(", ")}</p>
             {/each}
           {/if}
         {/if}
