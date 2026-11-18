@@ -231,6 +231,14 @@ for (const c of SHAPE.claims) {
   chunk.correspondence = { source: "confirmed", basis: null, refs: [], argument: null, bridge: null, question: null,
                            would_decide: null, confidence: null, note: "", by: "A. Auditor", ...READINGS[c.id] };
   chunk.reviews = REPORTS[c.id] || [];
+  // A report whose reviewer changed their judgement after the author's account, as
+  // `simple.uncounted_view` lists it: not counted (#665).
+  if (c.id === "P:thm:witnesses") chunk.uncounted_reviews = [{
+    reviewer: { id: "human:C-Reviewer", kind: "human", name: "C. Reviewer", identity: "self-declared" },
+    verdict: { value: "faithful", detail: "" }, decided_at: "2026-01-02T00:00:00Z", submitted_at: "2026-01-02T00:09:00Z",
+    changed_judgement: { reason: "The author's account shows the witnesses are chosen after n.", recorded_at: "2026-01-03T00:00:00Z",
+                         verdict: { value: "narrower", detail: "Lean fixes the witnesses first." } },
+    why: "the reviewer changed their judgement after the author's account: not counted" }];
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
@@ -2219,6 +2227,18 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
   });
 
+  await check("a report whose judgement changed is listed in the audit details as not counted", width, async (pg) => {
+    await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
+    await pg.locator(".claim-view .chipbtn").click();
+    const box = pg.locator(".claim-view .details .uncounted");
+    await box.waitFor();
+    const text = (await box.textContent()).replace(/\s+/g, " ").trim();
+    assert.match(text, /^Faithful before the author's account, by C\. Reviewer \(self-declared\), 2026-01-02; changed after it to Narrower, 2026-01-03\./);
+    assert.match(text, /Lean fixes the witnesses first\. The author's account shows the witnesses are chosen after n\./);
+    assert.match(await pg.locator(".claim-view .details").textContent(), /Reports not counted \(1\)/);
+    assert.equal(await pg.locator("details.review").count(), 0, "it is not shown as a review");
+  });
+
   await check("a \"there is\" inside a conclusion shows its witness's type and scope", width, async (pg) => {
     await pg.goto(origin + `/structure/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:witnesses")}`);
     const st = pg.locator(".claim-view .view :not(.suggestion) > .stmt").first();
@@ -2835,6 +2855,10 @@ await check("review's Compare withholds the outcome the author gives a statement
     await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
     await pg.locator(".review .account").first().waitFor();
     assert.ok((await pg.locator(".review .account").first().textContent()).startsWith(account), `${unit}: the author's account after the verdict`);
+    // #685: what the verdict means for the claim, when a clause refutes the proposition.
+    const refuted = pg.locator(".review .refuted-line");
+    if (unit.endsWith("_pos")) assert.equal(await refuted.count(), 0, `${unit}: no clause refutes it`);
+    else assert.equal(await refuted.textContent(), "This proposition is refuted by Toy.Acceptance.prop_pred: Lean checks that it proves the negation, so no proof of the proposition can follow.");
   }
 });
 
@@ -3396,12 +3420,27 @@ await check("review opens the selected claim, keeps protocol order and exports a
   await pg.getByRole("button", { name: "Record verdict and show the author's review" }).click();
   await pg.locator(".review .author").waitFor();
   assert.match(await pg.locator(".review .unit").textContent(), /Your coverage: Every clause, by an argument combining Lean results/);
+  // A judgement changed after the author's review (#665): its reason, and a revised verdict with
+  // the detail it needs, before the report can be saved; the blind verdict stays as recorded.
+  await pg.getByRole("checkbox", { name: "My judgement changed after reading the author's review" }).check();
+  const save = pg.getByRole("button", { name: "Save report", exact: true });
+  assert.ok(await save.isDisabled(), "a changed judgement says why");
+  await pg.getByRole("textbox", { name: "Why your judgement changed" }).fill("The author's account reads the sum over integers.");
+  assert.ok(!(await pg.getByRole("combobox", { name: "The verdict you would give now (optional)" }).locator("option").allTextContents()).includes("Faithful"),
+            "the blind verdict is not offered again");
+  await pg.getByRole("combobox", { name: "The verdict you would give now (optional)" }).selectOption({ label: "Narrower" });
+  assert.ok(await save.isDisabled(), "a narrower verdict needs its detail");
+  await pg.locator("#changed-detail").fill("Lean states it for natural numbers only.");
   await pg.getByRole("button", { name: "Save report", exact: true }).click();
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const report = await pg.evaluate(() => JSON.parse(localStorage.getItem("prooflens-review:toy-paper")).reports[0]);
   assert.deepEqual(report.unit.claims, ["T:thm:even-add"]);
   assert.equal(report.reading.revealed_by[0].what, "Lean");
   assert.equal(report.verdict.value, "faithful");
+  assert.deepEqual({ ...report.changed_judgement, recorded_at: null }, {
+    reason: "The author's account reads the sum over integers.", recorded_at: null,
+    verdict: { group: "problem", value: "narrower", detail: "Lean states it for natural numbers only." } });
+  assert.ok(report.author_review.shown_at <= report.changed_judgement.recorded_at);
   assert.deepEqual(report.correspondence, { coverage: "full", basis: "reviewed_composition",
                                             argument: "The sum of two even numbers is even, applied once." });
   assert.ok(report.reading.locked_at <= report.comparison.decided_at && report.comparison.decided_at <= report.author_review.shown_at);

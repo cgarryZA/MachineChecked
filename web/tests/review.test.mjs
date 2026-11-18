@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
          ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport,
          questionsOf, needsDetail, VERDICTS, STEP_VERDICTS, DIFFICULT_CASES,
-         DIFFICULT_CASES_GUIDE } from "../src/lib/review.js";
+         DIFFICULT_CASES_GUIDE, changedJudgement } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // What the detail of each verdict says, or null when it needs none: the same, verdict for
@@ -21,6 +21,15 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const CASES = JSON.parse(fs.readFileSync(path.resolve(here, "../../engine/python/prooflens/data/review_examples.json"), "utf8"));
 assert.deepEqual(DIFFICULT_CASES, CASES.examples.map(({ id, title, text }) => ({ id, title, text })));
 assert.equal(DIFFICULT_CASES_GUIDE, CASES.url);
+// A judgement changed after the author's review: recorded or refused, case for case, as the command
+// line does (tests/fixtures/review/changed-judgement.json, which
+// tests/contracts/test_changed_judgement.py checks against `review_cli.changed_judgement`).
+const CHANGED = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/changed-judgement.json"), "utf8"));
+for (const c of CHANGED.cases) {
+  const { judgement, problems } = changedJudgement(CHANGED.units[c.unit], c.blind, c.given);
+  assert.equal(problems.length > 0, !!c.refused, `${c.name}: ${problems.join("; ")}`);
+  if (!c.refused) assert.deepEqual(judgement, c.judgement, c.name);
+}
 const DETAILS = JSON.parse(fs.readFileSync(path.resolve(here, "../../tests/fixtures/review/verdict-details.json"), "utf8"));
 for (const [kind, table, asked] of [["spec", VERDICTS, DETAILS.statement], ["step", STEP_VERDICTS, DETAILS.step]]) {
   assert.deepEqual(Object.values(table).flat().map((v) => v.value).sort(), Object.keys(asked).sort(), kind);
@@ -35,6 +44,15 @@ for (const c of COVER.cases) {
   const { correspondence, problems } = reportCorrespondence(COVER.units[c.unit], c.verdict, c.given);
   assert.equal(problems.length > 0, !!c.refused, `${c.name}: ${problems.join("; ")}`);
   if (!c.refused) assert.deepEqual(correspondence, c.correspondence, c.name);
+}
+// A report carries what the build records of a theorem refuting its proposition, as the engine's
+// does (#685); a unit with none, nothing.
+{
+  const refuted_by = [{ claim: "T:prop:pred", clause: 1, theorem: "Toy.Acceptance.prop_pred", checked: true, line: "This proposition is refuted by …" }];
+  const base = { index: { release: "v1", papers: [] }, reviewer: { kind: "person", name: "A" },
+                 draft: { reading: "r".repeat(20), locked_at: "t0", comparison: "c", decided_at: "t1", group: "matches", verdict: "faithful", author_shown_at: "t2" } };
+  assert.deepEqual(buildReport({ ...base, unit: { ...DRAFTS.unit, kind: "spec", refuted_by } }).refuted_by, refuted_by);
+  assert.equal("refuted_by" in buildReport({ ...base, unit: { ...DRAFTS.unit, kind: "spec" } }), false);
 }
 // The page records only the fields of the coverage and basis chosen.
 assert.deepEqual(draftCoverage({ coverage: "full", basis: "direct", argument: "left from before", would_decide: "x",
@@ -60,6 +78,9 @@ for (const c of UNDO.cases) {
   const r = again(c.report, work.drafts[c.report.unit.id]);
   assert.deepEqual(r.comparison.checklist, c.draft.checklist, c.name);
   for (const k of ["fingerprint", "fingerprints", "legacy_hash"]) assert.deepEqual(r.pins[k], c.report.pins[k], `${c.name}: pins.${k}`);
+  // A judgement changed after the author's review comes back with its time, beside the verdict.
+  assert.deepEqual(r.changed_judgement, c.report.changed_judgement, `${c.name}: changed_judgement`);
+  assert.equal(r.verdict.value, c.report.verdict.value, c.name);
   work.reports.push(structuredClone(c.report));
   assert.equal(undoReport(work), `${c.report.unit.id} has a draft in progress; finish or keep it first`);
   assert.equal(work.reports.length, 1, "nothing is taken back");

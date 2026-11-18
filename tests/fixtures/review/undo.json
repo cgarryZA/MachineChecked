@@ -201,6 +201,140 @@
     "author_shown_at": "2026-01-01T00:01:00Z",
     "disagreements": "none"
    }
+  },
+  {
+   "name": "a report whose judgement changed after the author's review",
+   "report": {
+    "schema": "prooflens/review-report@1",
+    "mode": "independent",
+    "unit": {
+     "id": "spec:Toy.PaperSpec.thm_even_add",
+     "kind": "spec",
+     "name": "Toy.PaperSpec.thm_even_add",
+     "lean": [
+      "Toy.PaperSpec.thm_even_add"
+     ],
+     "claims": [
+      "T:thm:even-add"
+     ],
+     "papers": [
+      "T"
+     ]
+    },
+    "pins": {
+     "release": "r1",
+     "project_commit": null,
+     "manuscripts": {
+      "T": null
+     },
+     "legacy_hash": null,
+     "fingerprint": "synthetic-fingerprint",
+     "fingerprints": null,
+     "source_sha256": {
+      "T:thm:even-add": "synthetic-source-digest"
+     }
+    },
+    "reviewer": {
+     "id": "human:Synthetic-Reviewer",
+     "kind": "human",
+     "name": "Synthetic Reviewer",
+     "model": null,
+     "same_family_as_author": "no",
+     "identity": "self-declared"
+    },
+    "reading": {
+     "text": "Every pair of even natural numbers has an even sum.",
+     "locked_at": "2026-01-01T00:00:00Z",
+     "revealed_by": [
+      {
+       "unit": "spec:Toy.PaperSpec.thm_bound",
+       "what": "Lean"
+      }
+     ]
+    },
+    "comparison": {
+     "text": "The quantifiers and the conclusion agree.",
+     "witness": "The witness meets the hypotheses at a = 2, b = 4.",
+     "checklist": {
+      "quantifiers": "matches",
+      "conclusion": "differs",
+      "constants": "unsure"
+     },
+     "decided_at": "2026-01-01T00:01:00Z"
+    },
+    "verdict": {
+     "group": "matches",
+     "value": "broader",
+     "detail": "Take the instance b = a."
+    },
+    "correspondence": {
+     "coverage": "full",
+     "basis": "reviewed_composition",
+     "argument": "Apply the sum rule once."
+    },
+    "author_review": {
+     "shown_at": "2026-01-01T00:01:00Z",
+     "disagreements": "The author's review says nothing of the witness."
+    },
+    "submitted_at": "2026-01-01T00:02:00Z",
+    "issue_draft": {
+     "kind": "explanatory note",
+     "title": "Toy.PaperSpec.thm_even_add: broader (T:thm:even-add)",
+     "body": "Review unit `spec:Toy.PaperSpec.thm_even_add`, verdict **broader**.\n\nTake the instance b = a."
+    },
+    "changed_judgement": {
+     "reason": "The author's account shows the bound is for n >= 1 only.",
+     "verdict": {
+      "group": "problem",
+      "value": "narrower",
+      "detail": "Lean adds n >= 1."
+     },
+     "recorded_at": "2026-01-01T00:02:00Z"
+    }
+   },
+   "draft": {
+    "stage": "author",
+    "reading": "Every pair of even natural numbers has an even sum.",
+    "locked_at": "2026-01-01T00:00:00Z",
+    "revealed_by": [
+     {
+      "unit": "spec:Toy.PaperSpec.thm_bound",
+      "what": "Lean"
+     }
+    ],
+    "source_sha256": {
+     "T:thm:even-add": "synthetic-source-digest"
+    },
+    "comparison": "The quantifiers and the conclusion agree.",
+    "witness": "The witness meets the hypotheses at a = 2, b = 4.",
+    "checklist": {
+     "quantifiers": "matches",
+     "conclusion": "differs",
+     "constants": "unsure"
+    },
+    "decided_at": "2026-01-01T00:01:00Z",
+    "group": "matches",
+    "verdict": "broader",
+    "detail": "Take the instance b = a.",
+    "correspondence": {
+     "coverage": "full",
+     "basis": "reviewed_composition",
+     "argument": "Apply the sum rule once."
+    },
+    "lean": {
+     "fingerprint": "synthetic-fingerprint",
+     "fingerprints": null,
+     "legacy_hash": null
+    },
+    "author_shown_at": "2026-01-01T00:01:00Z",
+    "disagreements": "The author's review says nothing of the witness.",
+    "changed": {
+     "reason": "The author's account shows the bound is for n >= 1 only.",
+     "verdict": "narrower",
+     "detail": "Lean adds n >= 1.",
+     "recorded_at": "2026-01-01T00:02:00Z"
+    }
+   }
   }
  ]
 }

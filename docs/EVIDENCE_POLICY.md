@@ -31,7 +31,7 @@ A formal claim's status, from strongest to weakest:
 | `formal: proved assuming results not yet proved` | every open printed clause has a theorem whose type is exactly its proposition assuming other propositions (`accept_from`), and at least one of those is not proved; the clause becomes proved once each is the proposition of a proved clause |
 | `formal: open; some clauses proved` | some clauses are proved, and a printed clause with nothing proved for it is open |
 | `formal: open` | a proposition is written, a proof is missing |
-| `formal: unspecified` | no proposition is written yet |
+| `formal: unspecified` | no proposition is written yet: no clause names one |
 | `formal: malformed` | the inventory gives corrections but no original clause |
 
 None of the statuses between `refuted as printed` and `formal: open` is a proof of the printed
@@ -112,6 +112,13 @@ passage of its own.
   and record a reading at the new pin to restore the review; `review promote` refuses a report
   on such a passage. A paper read only from its PDF has no source check, and its readings count
   against the pin.
+- **Every passage needs a pin.** A claim of a paper read from its LaTeX source that has no
+  source pin (no `source_sha256`) is a `source-pin-missing` violation naming the claim: the
+  source check has nothing to compare its passage with. No reading of its passage counts: a
+  review that reads it is pending (`source-no-pin`) until the claim is pinned and a reading is
+  recorded at the pin. The violation gives the fields that pin the passage as the build's
+  manuscript prints it (`fix`, when the build locates the passage); no inventory command pins a
+  claim that has no pin.
 - **Markers written before the digests were recorded.** Such a marker counts for a claim only
   while the project's Git history shows the claim's passage unchanged since the marker was
   written: the commit that wrote the marker's line, and every later version of the inventory,

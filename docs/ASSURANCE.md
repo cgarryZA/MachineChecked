@@ -69,7 +69,7 @@ A citation followed by the qualifier (`Lemma 1 (Lemma 7 of the journal version)`
 
 With multiple root TeX files, specify `root`. Without LaTeX, MachineChecked falls back to the paper's PDF and labels the weaker source evidence.
 
-A paper published as a PDF is configured with `source = { path = "…" }` and `pdf = "paper.pdf"` (no `root`); its numbered statements are found by their bold headings, and any the headings miss can be placed by hand in `anchors.json`. To meet the release gate's source condition, pin the PDF with `pdf_sha256 = "<its SHA-256>"`: the gate then checks the hash, requires every claim in scope to be found, and states that the source is a PDF with approximate claim positions.
+A paper published as a PDF is configured with `source = { path = "…" }` and `pdf = "paper.pdf"` (no `root`); its numbered statements are found by their bold headings (in a PDF with none, by a statement kind and number starting a paragraph), and any the headings miss can be placed by hand in `anchors.json`. To meet the release gate's source condition, pin the PDF with `pdf_sha256 = "<its SHA-256>"`: the gate then checks the hash, requires every claim in scope to be found, and states that the source is a PDF with approximate claim positions.
 
 Under `[project]`, `author` is the name the audit is published under, `issues` the GitHub repository where Report issue opens reports, `site_url` the published reader's address, and `repository` the GitHub repository of the Lean source when it is not the project's `origin` remote. `repository_private = true` keeps the repository's name out of the reader's text; its Lean source links still name it, and open only for people with access.
 
@@ -104,6 +104,8 @@ The claim inventory lists each printed claim, its pinned source, scope and claus
 ```
 
 This is one claim entry inside `claims.json`. The acceptance theorem must have the specification’s **exact closed proposition** as its type.
+
+Every entry of a paper read from its LaTeX source carries a source pin (`source_sha256`). `check` reports an entry without one as a violation (`source-pin-missing`) and counts no review of its passage until it is pinned; the violation gives the fields to add (`fix` in `check --json`), with the digest of the passage as this build's manuscript prints it.
 
 Other clause fields include `refute` (a proof of the printed proposition's negation), `accept_from` (a proof from other propositions, below), `corrects` (which original clause a correction addresses, with its `kind`), and `defs` for a definition claim.
 
@@ -161,7 +163,7 @@ For definitions use `def-review`. The hash records the declaration version revie
 
 A marker records a reading, so one with no review text before it (a heading followed only by markers, as when markers are copied without their reviews) counts as no review: the declaration reads as not reviewed, its claim as review pending, and `build` lists each such marker with its file and line (an obligation, code `review-without-reading`). `bare_markers_by = ["reviewer"]` under `[project]` lets the markers of the reviewers it names count without text.
 
-The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, which links the report's record, archived in `reports/` beside the review files ([Maintainer acceptance](REVIEWING.md#maintainer-acceptance)). That line is the text of the reviewer's marker; every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
+The Review queue exports reports. The maintainer evaluates those reports before invoking `machinechecked review promote FILE.json`; promotion writes each acceptance marker after the declaration's last marker, preceded by a line ``Review by REVIEWER: VERDICT (report `reports/STEM.json`).``, which links the report's record, archived in `reports/` beside the review files ([Maintainer acceptance](REVIEWING.md#maintainer-acceptance)). That line is the text of the reviewer's marker, whatever precedes it (the file's title, or an author's section not yet closed by a marker); every other marker of the section, including one added later, keeps the section's text. The maintainer may also request further review.
 
 **Where a first marker goes.** A declaration or proof step with no marker yet gets its first one at the end of a review file:
 
