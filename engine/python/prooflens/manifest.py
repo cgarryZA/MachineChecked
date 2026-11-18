@@ -15,7 +15,7 @@ from .readable import readable
 from .assess import line_location, match_anchor, unread
 from .probe import proof_key
 from .source_regions import matches as source_matches
-from .util import content_id, norm_ws, sha256_text
+from .util import content_id, norm_ws, sha256_text, strip_comments
 from .status import fields, STATUSES, source_evidence
 
 SCHEMA = "prooflens/manifest@1"
@@ -144,7 +144,7 @@ def own_part(cid: str, anchor: dict | None, t: dict) -> dict | None:
     shown = (anchor or {}).get("statement")
     if not text or not shown or reg.get("error") or not reg.get("file"):
         return None
-    if norm_ws(shown) in norm_ws(text):
+    if norm_ws(shown) in norm_ws(strip_comments(text)):
         return None
     return {"file": reg["file"], "start_line": reg["start_line"], "end_line": reg["end_line"],
             "text": text}
