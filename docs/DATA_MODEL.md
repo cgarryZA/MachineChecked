@@ -244,7 +244,9 @@ that identity followed by `.name`: it names the name alone, apart from the binde
 variable's occurrences. A term also lists its sub-terms as `terms`, ranges `{from, to}` of its
 segments (outer before inner; none for a very large term), so that a reader can select a whole
 sub-term; an application printed with notation (`x = y`, `∃ x, p`, `↑n`) has the application's
-identity. Each identity names one sub-term of the printed expression.
+identity. Each identity names one sub-term of the printed expression. A term is printed in full,
+however deep or long; only a proof inside it is printed as `⋯`, since which proof it is changes
+nothing the term says.
 
 Lean prints an application without its instance arguments, which a reader takes to be those
 instance resolution finds where the application stands. In the statement of a specification or a
