@@ -71,6 +71,13 @@ REFUTE_ONLY = {"refutation not valid"}
 # A correction (or special case) of a printed clause states the printed claim with the
 # correction: reviewed against the printed passage, its honest verdict is this one (#639).
 CORRECTION_ONLY = {"faithful to the correction"}
+# A broader statement that its reviewer suspects false (`suspicion`): a proof of it may never
+# come, and a refutation of it would not refute the printed claim. The reviewer says why, and
+# the report records the verdict in a group of its own, apart from the matches (#637). A
+# definition states nothing that can be false, so the suspicion is for a statement's units.
+SUSPECTABLE = {"broader"}
+SUSPECT_GROUP = "suspect"
+STATEMENT_KINDS = ("spec", "link")
 # A proof step is reviewed as printed: does it hold? (`steps.VERDICTS`)
 from .steps import VERDICTS as STEP_VERDICTS
 
@@ -134,7 +141,8 @@ class ReviewError(RuntimeError):
 # to the author's review until the report is submitted.
 EDITABLE = {"read": ("reading",),
             "compare": ("comparison", "witness", "checklist", "group", "verdict", "detail",
-                        "coverage", "basis", "argument", "bridge", "would_decide"),
+                        "suspect_false", "coverage", "basis", "argument", "bridge",
+                        "would_decide"),
             "author": ("disagreements", "changed")}
 MARKS = ("matches", "differs", "unsure")
 
@@ -185,6 +193,40 @@ def verdict_group(u: dict, verdict) -> str | None:
     """The group of `verdict` among the verdicts of unit `u` (a step's own, or a statement's)."""
     table = STEP_VERDICTS if u.get("kind") == "step" else VERDICTS
     return next((g for g, vs in table.items() if verdict in vs), None)
+
+
+def suspicion(u: dict, verdict, given) -> tuple[str | None, list[str]]:
+    """The reviewer's suspicion that the statement of unit `u` is false, as a report records it
+    with the verdict (`verdict.suspect_false`: the reason or a counterexample), and what is
+    wrong with `given`. It goes with a broader verdict on a statement (`SUSPECTABLE`,
+    `STATEMENT_KINDS`), and says why. None when nothing is given."""
+    if given is None:
+        return None, []
+    if not isinstance(given, str):
+        return None, ["the suspicion that the statement is false is text: the reason or a "
+                      "counterexample"]
+    why = []
+    if verdict not in SUSPECTABLE:
+        why.append(f"a suspicion that the statement is false goes with a broader verdict, not "
+                   f"{verdict!r}")
+    elif u.get("kind") not in STATEMENT_KINDS:
+        why.append("a definition states nothing that can be false: the suspicion goes with a "
+                   "broader statement")
+    if not given.strip():
+        why.append("say why you suspect the broader statement false: the reason or a "
+                   "counterexample")
+    return (None if why else given), why
+
+
+def report_group(d: dict) -> str | None:
+    """The group a report records for the verdict of draft `d`: the verdict's own, except a
+    broader statement its reviewer suspects false, which is grouped apart (`SUSPECT_GROUP`)."""
+    return SUSPECT_GROUP if d.get("suspect_false") else d.get("group")
+
+
+def verdict_words(v: dict) -> str:
+    """A report's verdict (`{value, suspect_false}`) in the words a line about it uses."""
+    return f"{v.get('value')}" + (", suspected false" if v.get("suspect_false") else "")
 
 
 def correspondence(u: dict, verdict, given) -> tuple[dict | None, list[str]]:
@@ -1016,14 +1058,17 @@ class Session:
 
     def decide(self, uid: str, verdict: str, comparison: str, detail: str = "",
                witness: str = "", coverage: dict | None = None, checklist: dict | None = None,
-               shown: str | dict | None = None, members: dict | None = None) -> None:
+               shown: str | dict | None = None, members: dict | None = None,
+               suspect_false: str | None = None) -> None:
         """Step 2's record: the verdict, the comparison and, with them, the reviewer's coverage
         (`correspondence`) and checklist, all before the author's review is shown (in an
         informed session, until the report is submitted). The Lean the verdict is about is the
         version shown (`shown`, the unit's fingerprint as the reviewer's page drew it, or as
         `show` recorded it): refused as stale when the build has changed it since. For a
         structure's unit, `members` records a separate verdict on one of the constants it covers
-        (`{name: {verdict, detail}}`, `member_verdicts`): the unit's verdict holds for the rest."""
+        (`{name: {verdict, detail}}`, `member_verdicts`): the unit's verdict holds for the rest.
+        With a broader verdict on a statement, `suspect_false` says why the reviewer suspects the
+        broader statement false (`suspicion`)."""
         u = self.unit(uid)
         if self.informed:
             d = self._started(u)
@@ -1045,6 +1090,9 @@ class Session:
         if asked and not (detail or "").strip():
             raise ReviewError(f"verdict {verdict!r} needs --detail: {asked[0].lower()}{asked[1:]}",
                               "invalid")
+        suspected, why = suspicion(u, verdict, suspect_false)
+        if why:
+            raise ReviewError("; ".join(why), "invalid")
         if not (comparison or "").strip():
             raise ReviewError("the comparison is empty", "invalid")
         was = self._fp(shown) if isinstance(shown, dict) else shown or d.get("shown_fingerprint")
@@ -1068,6 +1116,10 @@ class Session:
             d["members"] = apart
         else:
             d.pop("members", None)
+        if suspected is not None:
+            d["suspect_false"] = suspected
+        else:
+            d.pop("suspect_false", None)
         d.update(group=group, verdict=verdict, detail=detail or "", comparison=comparison,
                  witness=witness or "", checklist=checklist, correspondence=cor,
                  decided_at=now(), stage="author",
@@ -1280,7 +1332,11 @@ class Session:
                if r.get("shown_definitions") else {}),
             "comparison": cmp_.get("text") or "", "witness": cmp_.get("witness") or "",
             "checklist": cmp_.get("checklist") or {}, "decided_at": cmp_.get("decided_at"),
-            "group": v.get("group"), "verdict": v.get("value"), "detail": v.get("detail") or "",
+            # The draft keeps the verdict's own group; the report's for a suspected broader
+            # statement is `report_group`'s.
+            "group": "matches" if v.get("group") == SUSPECT_GROUP else v.get("group"),
+            "verdict": v.get("value"), "detail": v.get("detail") or "",
+            **({"suspect_false": v["suspect_false"]} if v.get("suspect_false") else {}),
             **({"members": v["members"]} if v.get("members") else {}),
             "correspondence": r.get("correspondence"),
             "lean": {k: pins.get(k) for k in ("fingerprint", "fingerprints", "legacy_hash")},
@@ -1472,12 +1528,12 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
     POST `/api/review` with `reviewer` (`same_family`, `workspace`) and `action`: `begin`
     (`unit`: step 1 started, with `seen_before`), `edit` (`unit`, `stage`, `fields`: what was
     typed so far), `lock` (`unit`, `reading`), `decide` (`unit`, `verdict`, `comparison`,
-    `detail`, `witness`, `checklist`, `coverage`, and `shown`: the unit's `fingerprint` and
-    `fingerprints` as the page drew it; with `show_author`, step 3 is shown at once), `author`
-    (`unit`), `submit` (`unit`, `disagreements`: the `report`), `undo`, or `expose` (`claims`,
-    `what`, `how`: material the reviewer saw outside the steps). Each answers with the work as
-    saved after it. A refused step answers 400 with its message and `kind`; a draft changed
-    meanwhile answers 409 with `conflicts`."""
+    `detail`, `witness`, `checklist`, `coverage`, `suspect_false`, and `shown`: the unit's
+    `fingerprint` and `fingerprints` as the page drew it; with `show_author`, step 3 is shown at
+    once), `author` (`unit`), `submit` (`unit`, `disagreements`: the `report`), `undo`, or
+    `expose` (`claims`, `what`, `how`: material the reviewer saw outside the steps). Each
+    answers with the work as saved after it. A refused step answers 400 with its message and
+    `kind`; a draft changed meanwhile answers 409 with `conflicts`."""
     def session(q: dict) -> Session:
         who = parse_reviewer(q.get("reviewer") or "", q.get("same_family") or "unknown")
         return Session(work_dir, who, q.get("workspace") or None, data_dir=data_dir)
@@ -1498,7 +1554,8 @@ def api(work_dir: Path, data_dir: Path) -> tuple[dict, dict]:
         elif action == "decide":
             s.decide(uid, req.get("verdict") or "", req.get("comparison") or "",
                      req.get("detail") or "", req.get("witness") or "", req.get("coverage"),
-                     req.get("checklist"), req.get("shown"), req.get("members"))
+                     req.get("checklist"), req.get("shown"), req.get("members"),
+                     req.get("suspect_false"))
             if req.get("show_author"):
                 s.author(uid)
         elif action == "author":
@@ -1534,11 +1591,15 @@ DRAFT_KIND = {"faithful with representation choices": "explanatory note",
               "cannot determine": "unresolved question"}
 UNRESOLVED_BODY = ("The reviewer could not determine whether the Lean statement says what the "
                    "paper says; this is an open question.")
+SUSPECT_BODY = ("The reviewer suspects the broader statement false: a proof of it may never "
+                "come, and a refutation of it would not refute the printed claim.")
 
 
-def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None) -> dict | None:
+def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None,
+                suspect_false: str | None = None) -> dict | None:
     """The issue a maintainer may file for a verdict, as the reader's `issueDraft` writes it.
-    An open question carries what would decide it, when the report's coverage (`cor`) says."""
+    An open question carries what would decide it, when the report's coverage (`cor`) says; a
+    broader statement its reviewer suspects false, why (`suspect_false`)."""
     if u.get("kind") == "step":
         return step_issue_draft(u, verdict, detail)
     kind = DRAFT_KIND.get(verdict)
@@ -1553,6 +1614,12 @@ def issue_draft(u: dict, verdict: str, detail: str, cor: dict | None = None) -> 
                 "body": f"Review unit `{u['id']}`, verdict **{verdict}**. {UNRESOLVED_BODY}"
                         + (f"\n\n**Open question.** {detail}" if detail else "")
                         + (f"\n\n**Would decide it.** {would}" if would else "")}
+    why = (suspect_false or "").strip()
+    if why:
+        return {"kind": kind, "title": f"{u['name']}: {verdict}, suspected false{suffix}",
+                "body": f"Review unit `{u['id']}`, verdict **{verdict}**. {SUSPECT_BODY}"
+                        + (f"\n\n{detail}" if detail else "")
+                        + f"\n\n**Suspected false.** {why}"}
     return {"kind": kind, "title": f"{u['name']}: {verdict}{suffix}",
             "body": f"Review unit `{u['id']}`, verdict **{verdict}**.\n\n{detail}".strip()}
 
@@ -1603,7 +1670,10 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
                     **({"locked_with": d["locked_with"]} if d.get("locked_with") else {})},
         "comparison": {"text": d["comparison"], "witness": d.get("witness") or "",
                        "checklist": d.get("checklist") or {}, "decided_at": d["decided_at"]},
-        "verdict": {"group": d["group"], "value": d["verdict"], "detail": d.get("detail") or "",
+        "verdict": {"group": report_group(d), "value": d["verdict"],
+                    "detail": d.get("detail") or "",
+                    # Why the reviewer suspects a broader statement false (`suspicion`).
+                    **({"suspect_false": d["suspect_false"]} if d.get("suspect_false") else {}),
                     # A structure's unit: the separate verdicts on constants it covers.
                     **({"members": d["members"]} if d.get("members") else {})},
         # Recorded with the verdict; None when the reviewer recorded no coverage.
@@ -1617,7 +1687,7 @@ def report(index: dict, u: dict, d: dict, reviewer: dict, disagreements: str,
            if isinstance(d.get("changed"), dict) and d["changed"].get("reason") else {}),
         "submitted_at": now(),
         "issue_draft": issue_draft(u, d["verdict"], d.get("detail") or "",
-                                   d.get("correspondence")),
+                                   d.get("correspondence"), d.get("suspect_false")),
         **({"evidence": evidence} if evidence else {}),
         # The definitions step 2 showed, at their fingerprints: what a later unit's folded
         # listing reads (`Session.folded_definitions`).

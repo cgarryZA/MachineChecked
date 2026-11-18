@@ -105,6 +105,23 @@ export const GROUPS = [
   { key: "cannot", label: "Cannot determine" },
 ];
 
+// A broader statement its reviewer suspects false (`review_cli.suspicion`): a proof of it may
+// never come, and a refutation of it would not refute the printed claim. The reviewer says why,
+// and the report records the verdict in a group of its own, apart from the matches (#637). A
+// definition states nothing that can be false, so it is offered for a statement's units.
+export const SUSPECTABLE = ["broader"];
+export const SUSPECT_GROUP = "suspect";
+export const suspectOffered = (unit, verdict) => SUSPECTABLE.includes(verdict) && ["spec", "link"].includes(unit?.kind);
+// What the reader calls a verdict that records the suspicion.
+export const SUSPECT_LABEL = { broader: "Broader, suspected false" };
+// The group a report records for the verdict of `draft` (`review_cli.report_group`).
+export const reportGroup = (draft) => (draft.suspect_false ? SUSPECT_GROUP : draft.group);
+// A report's verdict (`{value, suspect_false}`) as the reader names it.
+const VERDICT_LABELS = Object.fromEntries([...Object.values(VERDICTS), ...Object.values(STEP_VERDICTS)].flat().map((v) => [v.value, v.label]));
+export function verdictLabel(v) {
+  return (v?.suspect_false && SUSPECT_LABEL[v.value]) || VERDICT_LABELS[v?.value] || v?.value;
+}
+
 // The orders of the queue, as `machinechecked review next --order` names them. The queue the
 // build writes holds the first two; the informed order also reads the auditors' workspaces, so
 // only the local server of `machinechecked view` gives it.
@@ -388,9 +405,12 @@ const DRAFT_KIND = {
 };
 const UNRESOLVED_BODY = "The reviewer could not determine whether the Lean statement says what the "
   + "paper says; this is an open question.";
+const SUSPECT_BODY = "The reviewer suspects the broader statement false: a proof of it may never "
+  + "come, and a refutation of it would not refute the printed claim.";
 
-// An open question carries what would decide it, when the report's coverage (`cor`) says.
-export function issueDraft(unit, verdict, detail, cor = null) {
+// An open question carries what would decide it, when the report's coverage (`cor`) says; a
+// broader statement its reviewer suspects false, why (`suspect`).
+export function issueDraft(unit, verdict, detail, cor = null, suspect = null) {
   if (unit.kind === "step") return stepIssueDraft(unit, verdict, detail);
   const kind = Object.hasOwn(DRAFT_KIND, verdict) ? DRAFT_KIND[verdict] : null;
   if (!kind) return null;
@@ -404,6 +424,14 @@ export function issueDraft(unit, verdict, detail, cor = null) {
       body: `Review unit \`${unit.id}\`, verdict **${verdict}**. ${UNRESOLVED_BODY}`
         + (text ? `\n\n**Open question.** ${text}` : "")
         + (would ? `\n\n**Would decide it.** ${would}` : ""),
+    };
+  }
+  const why = String(suspect || "").trim();
+  if (why) {
+    return {
+      kind, title: `${unit.name}: ${verdict}, suspected false${suffix}`,
+      body: `Review unit \`${unit.id}\`, verdict **${verdict}**. ${SUSPECT_BODY}`
+        + (text ? `\n\n${text}` : "") + `\n\n**Suspected false.** ${why}`,
     };
   }
   return {
@@ -444,7 +472,10 @@ export function draftFromReport(r) {
     source_sha256: pins.source_sha256 ?? null,
     comparison: cmp.text || "", witness: cmp.witness || "", checklist: cmp.checklist || {},
     decided_at: cmp.decided_at ?? null,
-    group: v.group ?? null, verdict: v.value ?? null, detail: v.detail || "",
+    // The draft keeps the verdict's own group; the report's for a suspected broader statement
+    // is `reportGroup`'s.
+    group: v.group === SUSPECT_GROUP ? "matches" : v.group ?? null, verdict: v.value ?? null, detail: v.detail || "",
+    ...(v.suspect_false ? { suspect_false: v.suspect_false } : {}),
     correspondence: r.correspondence ?? null,
     lean: leanOf(pins),
     author_shown_at: a.shown_at ?? null, disagreements: a.disagreements || "",
@@ -546,7 +577,9 @@ export function buildReport({ index, unit, draft, reviewer }) {
     reading: { text: draft.reading, locked_at: draft.locked_at, revealed_by: draft.revealed_by || [] },
     comparison: { text: draft.comparison || "", witness: draft.witness || "",
                   checklist: draft.checklist || {}, decided_at: draft.decided_at },
-    verdict: { group: draft.group, value: verdict, detail: draft.detail || "" },
+    verdict: { group: reportGroup(draft), value: verdict, detail: draft.detail || "",
+               // Why the reviewer suspects a broader statement false (`review_cli.suspicion`).
+               ...(draft.suspect_false ? { suspect_false: draft.suspect_false } : {}) },
     // Recorded with the verdict (`reportCorrespondence`); null when the reviewer recorded no coverage.
     correspondence: draft.correspondence ?? null,
     author_review: { shown_at: draft.author_shown_at, disagreements: draft.disagreements || "none" },
@@ -556,7 +589,7 @@ export function buildReport({ index, unit, draft, reviewer }) {
     // A judgement changed after the author's review: beside the blind verdict, never in it.
     ...(changed ? { changed_judgement: changed } : {}),
     submitted_at: now(),
-    issue_draft: issueDraft(unit, verdict, draft.detail, draft.correspondence ?? null),
+    issue_draft: issueDraft(unit, verdict, draft.detail, draft.correspondence ?? null, draft.suspect_false || null),
   };
 }
 

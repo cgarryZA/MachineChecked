@@ -242,6 +242,17 @@ for (const c of SHAPE.claims) {
   fs.writeFileSync(f, JSON.stringify(chunk));
 }
 
+// A broader statement its reviewer suspects false (#637), as `simple.review_view` shows the report.
+fs.cpSync(path.join(root, "basis"), path.join(root, "basissuspect"), { recursive: true });
+{
+  const c = SHAPE.claims.find((x) => x.id === "P:thm:layout");
+  const f = path.join(root, "basissuspect", "data", "claims", c.file);
+  const chunk = JSON.parse(fs.readFileSync(f, "utf8"));
+  chunk.reviews[0].verdict = { group: "suspect", value: "broader", detail: "Take j := k.",
+                               suspect_false: "At j = 2 the broader layout fails." };
+  fs.writeFileSync(f, JSON.stringify(chunk));
+}
+
 // A model reviewer's declared family (#613). In zero configuration, a report by a model of unknown
 // family; in the toy's full assessment, a review the maintainer accepted over the same-family
 // rule, as the assessment reads it back (`accepted_family` on the record and on the clause's
@@ -2257,6 +2268,22 @@ await check("in the local reader a symbol is linked by choosing it and clicking 
     assert.match(open.text, /Open question: Is the set finite\?\s*Would decide it: Its Section 1\./);
   });
 
+  await check("a review of a broader statement suspected false says so, with why", width, async (pg) => {
+    await pg.goto(origin + `/basissuspect/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    const r = pg.locator("details.review");
+    await r.locator(":scope > summary").waitFor();
+    assert.match((await r.locator(":scope > summary").textContent()).replace(/\s+/g, " "), /^Review: Broader, suspected false, by B\. Reviewer/);
+    assert.equal(await r.getAttribute("data-group"), "suspect", "grouped apart from the matches");
+    await r.locator(":scope > summary").click();
+    assert.equal((await r.locator(".suspect-false").textContent()).replace(/\s+/g, " ").trim(),
+                 "The reviewer suspects the broader statement false: At j = 2 the broader layout fails.");
+    // A review that records no suspicion shows none.
+    await pg.goto(origin + `/basis/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
+    await pg.locator("details.review > summary").waitFor();
+    assert.equal(await pg.locator("details.review .suspect-false").count(), 0);
+    assert.equal(await pg.locator("details.review").getAttribute("data-group"), "matches");
+  });
+
   await check("a reviewer's declared model family is shown beside the review", width, async (pg) => {
     await pg.goto(origin + `/basisfamily/#/r/${SHAPE.release}/read/P/${encodeURIComponent("P:thm:layout")}`);
     const summary = pg.locator("details.review > summary");
@@ -3529,6 +3556,39 @@ await check("on a static copy, Undo keeps what the report recorded, its checklis
   await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
   const [second] = (await stored()).reports;
   assert.deepEqual(second, { ...first, submitted_at: second.submitted_at }, "the report saved again is the one taken back");
+});
+
+// #637: a broader statement the reviewer suspects false. The page offers the suspicion with a
+// broader verdict only, asks why before the verdict can be recorded, and the report records it
+// and groups the verdict apart from the matches; its issue draft says so.
+await check("on a static copy, a broader statement can be recorded as suspected false", 1300, async (pg) => {
+  await pg.goto(origin + `/review/#/r/${TOY.release}/review`);
+  await pg.evaluate((k) => localStorage.setItem(k, JSON.stringify({ reviewer: { kind: "human", name: "Synthetic reviewer" } })), REVIEW_KEY);
+  await pg.reload();
+  await pg.getByRole("textbox", { name: "Your reading", exact: true }).fill("The bound holds for every natural number, with the printed constant.");
+  await pg.getByRole("button", { name: "Lock my reading and show the Lean" }).click();
+  await pg.getByRole("textbox", { name: "Comparison", exact: true }).fill("Lean states the bound with no hypothesis on n.");
+  await pg.getByRole("button", { name: "Matches the paper", exact: true }).click();
+  const suspect = pg.getByRole("checkbox", { name: "I suspect the broader statement is false" });
+  await pg.getByRole("radio", { name: "Faithful", exact: true }).check();
+  assert.equal(await suspect.count(), 0, "not offered with a faithful verdict");
+  await pg.getByRole("radio", { name: "Broader; implies the printed claim", exact: true }).check();
+  await pg.locator("#verdict-detail").fill("Take n := 0.");
+  const record = pg.getByRole("button", { name: "Record verdict and show the author's review" });
+  assert.ok(!(await record.isDisabled()));
+  await suspect.check();
+  assert.ok(await record.isDisabled(), "a suspicion says why");
+  await pg.getByRole("textbox", { name: "Why: the reason or a counterexample" }).fill("At n = 1 the broader bound fails.");
+  await record.click();
+  await pg.locator(".review .author").waitFor();
+  assert.match(await pg.locator(".review .unit").textContent(), /Your verdict: broader, suspected false — Take n := 0\./);
+  assert.match(await pg.locator(".review .suspect-false").textContent(), /Why you suspect the broader statement false: At n = 1 the broader bound fails\./);
+  await pg.getByRole("button", { name: "Save report", exact: true }).click();
+  await pg.getByRole("button", { name: "Export reports (1 new)", exact: true }).waitFor();
+  const [report] = (await pg.evaluate((k) => JSON.parse(localStorage.getItem(k)), REVIEW_KEY)).reports;
+  assert.deepEqual(report.verdict, { group: "suspect", value: "broader", detail: "Take n := 0.", suspect_false: "At n = 1 the broader bound fails." });
+  assert.match(report.issue_draft.title, /: broader, suspected false \(/);
+  assert.match(await pg.locator("section.issue").textContent(), /broader, suspected false/);
 });
 
 // #488: on a static copy, the verdict records the Lean it was recorded against. The site is rebuilt

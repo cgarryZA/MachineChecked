@@ -35,6 +35,16 @@
    }
   },
   {
+   "verdict": "broader",
+   "detail": "Take n := 0.",
+   "suspect_false": "At n = 1 the broader bound fails: the left side is 2.",
+   "draft": {
+    "kind": "explanatory note",
+    "title": "Toy.even_add: broader, suspected false (Theorem 2.1)",
+    "body": "Review unit `thm:Toy.even_add`, verdict **broader**. The reviewer suspects the broader statement false: a proof of it may never come, and a refutation of it would not refute the printed claim.\n\nTake n := 0.\n\n**Suspected false.** At n = 1 the broader bound fails: the left side is 2."
+   }
+  },
+  {
    "verdict": "narrower",
    "detail": "Adds the hypothesis 0 < n.",
    "draft": {

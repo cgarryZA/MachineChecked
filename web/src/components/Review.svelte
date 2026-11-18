@@ -10,6 +10,7 @@
   import { questionsOf } from "../lib/review.js";
   import { DIFFICULT_CASES, DIFFICULT_CASES_GUIDE } from "../lib/review.js";
   import { changedJudgement } from "../lib/review.js";
+  import { suspectOffered } from "../lib/review.js";
   import { chosenWorkspace } from "../lib/workfile.js";
   import Comparison from "./Comparison.svelte";
   import WorkspaceFile from "./WorkspaceFile.svelte";
@@ -317,6 +318,17 @@
     draft.group = g; draft.verdict = verdicts[g].length === 1 ? verdicts[g][0].value : null;
     // A coverage that does not agree with the new kind of verdict is not kept.
     if (draft.coverage && !(COVERAGE_FOR[g] || []).includes(draft.coverage)) draft.coverage = null;
+    chooseVerdict();
+  }
+  // A suspicion that the broader statement is false goes with a broader verdict on a statement
+  // (`suspectOffered`): another verdict does not keep it.
+  const suspicionOffered = $derived(!!current && suspectOffered(current, draft?.verdict));
+  function chooseVerdict() {
+    if (!suspectOffered(current, draft.verdict)) draft.suspect_false = null;
+    persist();
+  }
+  function suspect(on) {
+    draft.suspect_false = on ? draft.suspect_false || "" : null;
     persist();
   }
   const detailWanted = $derived(draft?.verdict ? needsDetail(draft.verdict, current?.kind) : null);
@@ -326,7 +338,9 @@
   const coverageProblems = $derived(current && current.kind !== "step" && draft?.stage === "compare"
     ? reportCorrespondence(current, draft.verdict, draftCoverage(draft)).problems : []);
   const canDecide = $derived(!!draft?.verdict && (!detailWanted || (draft.detail || "").trim().length > 0)
-                             && (draft.comparison || "").trim().length > 0 && !coverageProblems.length);
+                             && (draft.comparison || "").trim().length > 0 && !coverageProblems.length
+                             // A suspicion says why.
+                             && (!suspicionOffered || draft.suspect_false == null || draft.suspect_false.trim().length > 0));
   function chooseBasis() {
     if (draft.basis === "checked_bridge" && !draft.bridge) draft.bridge = { theorem: (current.lean || [])[0] || "", target: "" };
     persist();
@@ -348,9 +362,11 @@
       const d = $state.snapshot(draft);
       act("decide", { unit: current.id, verdict: d.verdict, comparison: d.comparison, detail: d.detail || "",
         witness: d.witness || "", checklist: d.checklist || {}, coverage: current.kind !== "step" ? draftCoverage(d) : null,
+        suspect_false: suspicionOffered ? d.suspect_false ?? null : null,
         shown: { fingerprint: current.fingerprint || null, fingerprints: current.fingerprints || null }, show_author: true });
       return;
     }
+    if (!suspicionOffered) draft.suspect_false = null;
     if (current.kind !== "step") {
       const given = draftCoverage(draft);
       if (given.bridge) given.bridge = { ...given.bridge, target_fingerprint: targetPin(given.bridge) };
@@ -656,12 +672,20 @@
             {#if draft.group}
               <fieldset class="verdicts"><legend>Verdict</legend>
                 {#each (verdicts[draft.group] || []).filter((v) => (!v.statementOnly || current.kind === "spec") && (!v.correctionOnly || current.correction)) as v}
-                  <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={persist} /> {v.label}</label>
+                  <label><input type="radio" bind:group={draft.verdict} value={v.value} onchange={chooseVerdict} /> {v.label}</label>
                 {/each}
               </fieldset>
               {#if detailWanted}
                 <label for="verdict-detail">{detailWanted}</label>
                 <textarea id="verdict-detail" rows="3" bind:value={draft.detail} oninput={persist} placeholder={detailWanted}></textarea>
+              {/if}
+              {#if suspicionOffered}
+                <label class="suspect"><input type="checkbox" checked={draft.suspect_false != null} onchange={(e) => suspect(e.currentTarget.checked)} /> I suspect the broader statement is false</label>
+                {#if draft.suspect_false != null}
+                  <label for="suspect-false">Why: the reason or a counterexample</label>
+                  <textarea id="suspect-false" rows="3" bind:value={draft.suspect_false} oninput={persist}></textarea>
+                  <p class="faint small">A proof of it may then never come, and a refutation of it would not refute the printed claim. The report groups this verdict apart from the matches.</p>
+                {/if}
               {/if}
               {#if current.kind !== "step"}
                 <div class="cover" role="group" aria-label="Coverage">
@@ -706,7 +730,8 @@
               <button class="btn ghost" onclick={skip}>Skip</button>
             </div>
           {:else}
-            <p class="small"><strong>Your verdict:</strong> {draft.verdict}{draft.detail ? " — " + draft.detail : ""} <span class="faint">(recorded {draft.decided_at})</span></p>
+            <p class="small"><strong>Your verdict:</strong> {draft.verdict}{draft.suspect_false ? ", suspected false" : ""}{draft.detail ? " — " + draft.detail : ""} <span class="faint">(recorded {draft.decided_at})</span></p>
+            {#if draft.suspect_false}<p class="small suspect-false"><strong>Why you suspect the broader statement false:</strong> <span class="pre">{draft.suspect_false}</span></p>{/if}
             {#if coverageWords(draft.correspondence)}<p class="small"><strong>Your coverage:</strong> {coverageWords(draft.correspondence)}</p>{/if}
             <h3>The author's review</h3>
             {#if served && !draft.author_shown_at}
@@ -810,7 +835,8 @@
   @media (max-width: 640px) { .who { margin-left: 0; } }
   .checklist { list-style: none; padding: 0; margin: 6px 0; }
   .difficult { margin: 4px 0 8px; }
-  .changed-toggle { display: block; margin: 8px 0 4px; }
+  .changed-toggle, .suspect { display: block; margin: 8px 0 4px; }
+  .suspect-false .pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   .proposal { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; margin: 8px 0; }
   .proposal p { margin: 2px 0; }
   .refuted-line { border-left: 3px solid var(--tier-warning); padding: 2px 0 2px 10px; margin: 8px 0; }

@@ -106,8 +106,10 @@ document: `{"schema": "machinechecked/review-step@1", "action", "ok": true, "uni
 `author` after a verdict, `submitted` after the report), and the other fields say what the step
 recorded: `locked_at` and `revealed_by` (what you had already seen of the unit's Lean or author's
 review) for `lock`, with `locked_with` (each other unit, with its `revealed_by`) for a reading
-locked with others; `verdict`, `group`, `decided_at`, `correspondence` (the coverage and its basis,
-or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`, `group`,
+locked with others; `verdict`, `group` (the one the report records: `suspect` for a broader
+statement you suspect false, with `suspect_false`), `decided_at`, `correspondence` (the coverage
+and its basis, or null) and a structure's separate verdicts (`members`) for `decide`; `verdict`,
+`group`,
 `submitted_at`, the report's `revealed_by` and its `changed_judgement` (or null) for `submit`.
 `message` is the line the command
 prints without `--json`. A refused step prints the refusal below, and so does a text file that
@@ -1029,10 +1031,29 @@ and `machinechecked review decide --help` lists each verdict with the same quest
 or `detail` in a manifest). For a definition, and for other cases where a verdict is easy to get
 wrong, see [Difficult cases](#difficult-cases).
 
+**A broader statement you suspect false.** A broader statement implies the printed claim, and its
+extra generality can be false: then a proof of it may never come, and a refutation of it would
+not refute the printed claim. Say so with the verdict, and why: on the review page, tick *I
+suspect the broader statement is false* under *Broader* and give the reason or a counterexample;
+on the command line, pass `--suspect-false FILE` (`suspect_false` in a manifest). It goes with a
+broader verdict on a statement; a definition states nothing that can be false. For example, the
+paper states *for every measurable f, E[f] ≤ 1*, and the Lean states it for every f, with the
+lower integral `∫⁻ f` and no measurability:
+
+```sh
+machinechecked review decide spec:Toy.PaperSpec.mean_le broader comparison.md \
+  --detail instance.md --suspect-false why.md
+```
+
+The report records why as `verdict.suspect_false` and groups the verdict as `suspect`, apart from
+the matches. The reader shows the review as *Broader, suspected false*, with the reason.
+Promotion takes the report by the rules for a broader verdict: the review is of what the
+statement says, and its `Review by` line keeps the suspicion.
+
 A saved report carries an issue draft for the maintainer: an explanatory note for representation
-choices or a broader statement, a defect for a problem verdict, and an open question for *Cannot
-determine*, with the reviewer's question and what would decide it. The review page and the
-command line write the same drafts.
+choices or a broader statement (one suspected false says so, with why), a defect for a problem
+verdict, and an open question for *Cannot determine*, with the reviewer's question and what
+would decide it. The review page and the command line write the same drafts.
 
 ### Coverage with the verdict
 

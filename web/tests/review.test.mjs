@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 import { issueDraft, buildReport, orderedUnits, recordExposure, exposureOf, holdsBack, ORDER_SEEN,
          ORDER_EXPOSURE, reportCorrespondence, draftCoverage, draftFromReport, undoReport,
          questionsOf, needsDetail, VERDICTS, STEP_VERDICTS, DIFFICULT_CASES,
-         DIFFICULT_CASES_GUIDE, changedJudgement } from "../src/lib/review.js";
+         DIFFICULT_CASES_GUIDE, changedJudgement, SUSPECT_GROUP, suspectOffered,
+         verdictLabel } from "../src/lib/review.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // What the detail of each verdict says, or null when it needs none: the same, verdict for
@@ -81,6 +82,8 @@ for (const c of UNDO.cases) {
   // A judgement changed after the author's review comes back with its time, beside the verdict.
   assert.deepEqual(r.changed_judgement, c.report.changed_judgement, `${c.name}: changed_judgement`);
   assert.equal(r.verdict.value, c.report.verdict.value, c.name);
+  // The report's group, and a suspicion that the broader statement is false, come back (#637).
+  for (const k of ["group", "suspect_false"]) assert.deepEqual(r.verdict[k], c.report.verdict[k], `${c.name}: verdict.${k}`);
   work.reports.push(structuredClone(c.report));
   assert.equal(undoReport(work), `${c.report.unit.id} has a draft in progress; finish or keep it first`);
   assert.equal(work.reports.length, 1, "nothing is taken back");
@@ -108,7 +111,29 @@ assert.equal(unresolved.issue_draft.kind, "unresolved question");
 assert.match(unresolved.issue_draft.body, /\*\*Would decide it\.\*\* The paper's Section 1\./);
 
 for (const c of DRAFTS.cases) {
-  assert.deepEqual(issueDraft(DRAFTS.unit, c.verdict, c.detail), c.draft, `issue draft for ${c.verdict}`);
+  assert.deepEqual(issueDraft(DRAFTS.unit, c.verdict, c.detail, null, c.suspect_false ?? null), c.draft, `issue draft for ${c.verdict}`);
+}
+
+// A broader statement its reviewer suspects false (#637): the report records why, groups the
+// verdict apart from the matches and drafts the issue that says so, as the engine's does
+// (`review_cli.report`); the reader names it "Broader, suspected false". The draft keeps the
+// verdict's own group.
+{
+  const why = "At n = 1 the broader bound fails.";
+  const r = buildReport({
+    index: { release: "v1", papers: [] }, unit: { ...DRAFTS.unit, kind: "spec" }, reviewer: { kind: "person", name: "A" },
+    draft: { reading: "r".repeat(20), locked_at: "t0", comparison: "c", decided_at: "t1", group: "matches", verdict: "broader",
+             detail: "Take n := 0.", suspect_false: why, author_shown_at: "t2" } });
+  assert.deepEqual(r.verdict, { group: SUSPECT_GROUP, value: "broader", detail: "Take n := 0.", suspect_false: why });
+  assert.deepEqual(r.issue_draft, issueDraft({ ...DRAFTS.unit, kind: "spec" }, "broader", "Take n := 0.", null, why));
+  assert.match(r.issue_draft.title, /: broader, suspected false \(Theorem 2\.1\)$/);
+  assert.equal(draftFromReport(r).group, "matches");
+  assert.equal(draftFromReport(r).suspect_false, why);
+  assert.equal(verdictLabel(r.verdict), "Broader, suspected false");
+  assert.equal(verdictLabel({ value: "broader" }), "Broader; implies the printed claim");
+  // Offered with a broader verdict on a statement only.
+  assert.deepEqual([["spec", "broader"], ["link", "broader"], ["def", "broader"], ["spec", "faithful"]]
+    .map(([kind, v]) => suspectOffered({ kind }, v)), [true, true, false, false]);
 }
 
 // "Cannot determine" leaves an open question in the saved report, never a defect.

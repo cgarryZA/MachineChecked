@@ -9,7 +9,9 @@ it now is, or that the acceptance rules cannot count as an independent review:
   revisions and the digests of the paper passages read (`review_sources.py`) must be those the
   report was made at, and the manuscript must still match the pin of each passage read;
 * the verdict must be faithful, faithful with representation choices (listed), or broader (with
-  the instantiation that gives the printed claim);
+  the instantiation that gives the printed claim). A broader statement its reviewer suspects
+  false (`verdict.suspect_false`) is promoted by the same rules: the review is of what the
+  statement says, and its record, its text block and its `Review by` line keep the suspicion;
 * the reviewer's coverage, when the report records one (`correspondence`), must be one the
   review protocol writes, and not unresolved: an open question records neither a review nor a
   defect. A report without one is promoted as before;
@@ -490,6 +492,8 @@ def report_text(r: dict, cur: dict | None = None) -> str:
         f"Witness: {r['comparison'].get('witness') or '—'}",
         f"Verdict: {r['verdict']['value']}"
         + (f" — {r['verdict']['detail']}" if r['verdict'].get('detail') else ""),
+        *([f"Suspected false: {r['verdict']['suspect_false']}"]
+          if r["verdict"].get("suspect_false") else []),
         *_covers_lines(r),
         *_coverage_lines(r),
         *([f"Judgement changed after the author's review: {changed_text(r)}"]
@@ -689,6 +693,18 @@ def accepted_family_note(r: dict) -> str:
     return accepted_note(family_of(r["reviewer"])) if family_accepted(r) else ""
 
 
+def review_by_line(r: dict, name: str, record: str) -> str:
+    """The line promotion writes before the marker of declaration `name` for report `r`, whose
+    record is the file `record`: the reviewer, the verdict (a broader statement its reviewer
+    suspects false says so), the unit for a constant a structure's unit covers, and a model
+    reviewer accepted over the same-family rule (`accepted_family_note`). The reader shows it
+    as the review's text."""
+    from .review_cli import verdict_words
+    with_ = "" if name == marker_name(r) else f", with {marker_name(r)}"
+    return (f"Review by {r['reviewer']['id']}: {verdict_words(r['verdict'])}{with_}"
+            f"{accepted_family_note(r)} (report `{record}`).")
+
+
 def already_promoted(cfg: Config, r: dict, cur: dict) -> bool:
     """Whether the markers promoting `r` are already in the project's review files, as after a
     promotion of the same report: promoting it again would write them a second time."""
@@ -728,10 +744,7 @@ def apply(cfg: Config, accepted: list[tuple[dict, dict]]) -> list[dict]:
                 rel = rel.relative_to(path.parent.resolve())
             except ValueError:
                 pass
-            with_ = "" if n == marker_name(r) else f", with {marker_name(r)}"
-            insert_after(path, line, [f"Review by {r['reviewer']['id']}: {r['verdict']['value']}"
-                                      f"{with_}{accepted_family_note(r)} "
-                                      f"(report `{rel.as_posix()}`).", mk])
+            insert_after(path, line, [review_by_line(r, n, rel.as_posix()), mk])
             reviews, _ = load_reviews(cfg.reviews, cfg.ai_reviewers, cfg.root)
             last = history(reviews, r["unit"]["kind"], n)[-1]
             prev = ((cfg.root / last.file).resolve(), last.line)

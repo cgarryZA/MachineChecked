@@ -549,7 +549,9 @@ machinechecked review export --out machinechecked-reviews/my-reviews.json
 ([Coverage with the verdict](REVIEWING.md#coverage-with-the-verdict)). Every verdict needs
 `--detail` except `faithful`, `faithful to the correction` and, for a proof step, `holds as
 printed`; `review decide --help` lists each verdict with what its detail says, as the review page
-asks it.
+asks it. With `broader` on a statement, `--suspect-false FILE` says why you suspect the broader
+statement false (the reason or a counterexample): the report records it as
+`verdict.suspect_false` and groups the verdict as `suspect`, apart from the matches.
 
 For a definition unit, each passage of `review read --json` has a `role`: `defines` (the
 definition's own claim, mapped to it in the inventory) or `uses`, the defining passages first.
@@ -595,7 +597,8 @@ you find in the comparison.
 With `--json`, `lock`, `decide` and `submit` print one document (`machinechecked/review-step@1`)
 saying what was recorded: the unit's `step` now (`compare`, `author`, `submitted`), with
 `locked_at` and `revealed_by` (what you had already seen of the unit) after a lock, the `verdict`,
-`group`, `decided_at` and `correspondence` after a verdict, and the `verdict`, `submitted_at` and
+`group` (the report's: `suspect`, with `suspect_false`, for a broader statement you suspect
+false), `decided_at` and `correspondence` after a verdict, and the `verdict`, `submitted_at` and
 the report's `revealed_by` after the report. For many units, the same steps take `--manifest FILE
 --json`: a JSON list of `{"unit", ...the step's fields}`, each text inline or as `NAME_file`,
 applied entry by entry with the same refusals, and answered with one document listing each

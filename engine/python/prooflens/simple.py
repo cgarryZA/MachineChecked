@@ -642,6 +642,13 @@ def counted(reports: list[dict]) -> tuple[list[dict], list[dict]]:
             [r for r in reports if r.get("changed_judgement")])
 
 
+def _suspicion(v: dict) -> dict:
+    """Why a report's reviewer suspects a broader statement false (`verdict.suspect_false`, as
+    `review_cli.suspicion` records it), as the reader shows it; nothing when it records none."""
+    s = v.get("suspect_false")
+    return {"suspect_false": _text(s)} if isinstance(s, str) and s.strip() else {}
+
+
 def uncounted_view(r: dict) -> dict:
     """A report that is not counted (`counted`), as the claim's details list it: its reviewer,
     its blind verdict and when it was recorded, and the judgement changed after the author's
@@ -650,7 +657,8 @@ def uncounted_view(r: dict) -> dict:
     cj = r.get("changed_judgement") if isinstance(r.get("changed_judgement"), dict) else {}
     nv = cj.get("verdict") if isinstance(cj.get("verdict"), dict) else None
     return {"reviewer": {k: rv.get(k) for k in ("id", "kind", "name", "model", "identity")},
-            "verdict": {"value": v.get("value"), "detail": _text(v.get("detail"))},
+            "verdict": {"value": v.get("value"), "detail": _text(v.get("detail")),
+                        **_suspicion(v)},
             "decided_at": (r.get("comparison") or {}).get("decided_at"),
             "changed_judgement": {
                 "reason": _text(cj.get("reason")), "recorded_at": cj.get("recorded_at"),
@@ -694,7 +702,7 @@ def review_view(r: dict, links: list[dict], claim: dict) -> dict:
                                 and isinstance(e.get("what"), str)})
             if isinstance(seen, list) else None,
             "verdict": {"group": verdict.get("group"), "value": verdict.get("value"),
-                        "detail": _text(verdict.get("detail"))},
+                        "detail": _text(verdict.get("detail")), **_suspicion(verdict)},
             "reading": _text((r.get("reading") or {}).get("text")),
             "comparison": _text((r.get("comparison") or {}).get("text")),
             "checklist": (r.get("comparison") or {}).get("checklist") or {},
