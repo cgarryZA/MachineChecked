@@ -418,6 +418,14 @@ The configuration of a folder has no revision to change: `--write` records the n
 `papers.P.commit`. A folder is labelled by the revision it is given, so its claims are verified
 against it exactly as an acquired snapshot is.
 
+The other fields of the paper's entry `papers.P` move with its commit when their form names the
+old revision: a value that is the revision, and a URL with the revision as a path segment or a
+query value (a link to its tree, a file or the arXiv page of that revision). The plan's
+`paper_entry` gives the commit's change, each such field with its old and new value (`fields`),
+and the fields that name the old revision as a word of other text (`inspect`): those are left
+as they are, for you to check. A word that only resembles the revision is neither changed nor
+listed.
+
 The command reads both snapshots. It first checks each claim's passage at the original
 revision against its digests; a claim that does not match there stops the plan, and an
 original revision that cannot be read is an error, not a reason to use another baseline.
