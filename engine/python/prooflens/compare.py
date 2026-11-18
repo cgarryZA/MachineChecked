@@ -9,9 +9,10 @@ It reuses the records the reader shows; it runs no Lean and changes no file.
 
 A packet is filtered by stage before it is returned. `read` holds the paper only: the passage,
 with the paper's `\\lean{...}` tags removed, since they name declarations. `compare` adds the
-formal material and its mechanical structure: statements, binders, definitions, Lean's checks.
-`informed` adds prior interpretations: correspondence notes, review reports and markers, symbol
-links, statuses and the assessment's findings, and, when a workspace is named, its auditor's
+formal material and its mechanical structure: statements, binders, definitions, Lean's checks,
+and the operations Lean totalises in a locked statement (`totalisations`). `informed` adds prior
+interpretations: correspondence notes, review reports and markers, symbol links, statuses and
+the assessment's findings with their dismissals, and, when a workspace is named, its auditor's
 requirements of the claim with the passages that govern them and their alignment with Lean. Independent review uses `read` before its
 reading is locked and `compare` before its verdict; any other use is an informed investigation.
 
@@ -434,6 +435,33 @@ def _clause(cl: dict, stage: str = "informed", claim: str | None = None,
     return out
 
 
+def totalisations(ch: dict, cl: dict) -> list[dict]:
+    """The operations Lean totalises in a locked statement `cl` of the claim record `ch`, as the
+    assessment's totalisation warnings read them from the Lean alone: the operation, the type it
+    is taken in, where it is applied (`at`, and the sub-term there, `subterms`) and what Lean
+    gives it outside its domain (`message`). Every warning is listed, whatever has been decided
+    about it. What carries a judgement is left to the informed stage: a dismissal, whether the
+    engine finds the hypotheses supply the operation's conditions, the warning's state."""
+    k = next((i for i, x in enumerate(ch.get("clauses") or []) if x is cl), None)
+    if k is None:
+        return []
+    out = []
+    for f in ch.get("findings") or []:
+        if f.get("code") != "totalised" or f.get("subject") != f"{ch['id']}#{k}":
+            continue
+        occ = (f.get("occurrences") or [None])[0] or {}
+        out.append({"operation": f.get("trigger"), "message": f.get("message"),
+                    **{key: occ[key] for key in ("type", "at", "subterms")
+                       if occ.get(key) is not None}})
+    return out
+
+
+def _with_totalisations(d: dict, ch: dict, cl: dict) -> dict:
+    """A locked statement's declaration with its totalisations (`totalisations`), if any."""
+    found = totalisations(ch, cl)
+    return {**d, "totalised": found} if found else d
+
+
 def _definition(rec: dict, stage: str, site: Site | None = None) -> dict:
     out = {"id": f"def:{rec['name']}", "name": rec["name"], "kind": rec.get("kind"),
            "module": rec.get("module"), "range": rec.get("range"), "doc": rec.get("doc"),
@@ -687,8 +715,8 @@ def claim_packet(site: Site, claim: str, stage: str = "informed", limit: int | N
     if stage != "read":
         decls = _step_decls(ch) if ch.get("step") else \
             [_link(l, "link") for l in ch.get("links") or []]
-        decls += [_clause(cl, stage, ch["id"], ch.get("clauses")) for cl in ch.get("clauses") or []
-                  if cl.get("statement")]
+        decls += [_with_totalisations(_clause(cl, stage, ch["id"], ch.get("clauses")), ch, cl)
+                  for cl in ch.get("clauses") or [] if cl.get("statement")]
         # Results an auditor cited for objects are prior interpretations: informed stage only.
         derived = ((reading or {}).get("derivations") or []) if stage == "informed" else []
         _with_objects(decls, derived)
@@ -790,7 +818,8 @@ def unit_packet(site: Site, unit: dict, stage: str) -> dict:
             found = next(((ch, x) for ch in chunks for x in ch.get("clauses") or []
                           if x.get("spec") == unit["name"]), None)
             if found:
-                d = _clause(found[1], stage, found[0]["id"], found[0].get("clauses"))
+                d = _with_totalisations(_clause(found[1], stage, found[0]["id"],
+                                                found[0].get("clauses")), found[0], found[1])
                 decls.append(d)
                 cor = out["unit"].get("correction")
                 if cor and not cor.get("of_clause") and (d.get("correction") or {}).get(
@@ -1394,6 +1423,22 @@ def says_lines(d: dict) -> list[str]:
     return []
 
 
+def totalisation_lines(d: dict) -> list[str]:
+    """The operations Lean totalises in a locked statement (`totalisations`), for the terminal:
+    each with the sub-terms where it is applied and what Lean gives it outside its domain."""
+    if not d.get("totalised"):
+        return []
+    out = [f"Operations Lean totalises in {d.get('name')}, read from the Lean:"]
+    for t in d["totalised"]:
+        where = ", ".join(f"`{s['text']}`" for s in t.get("subterms") or [] if s.get("text"))
+        msg = (t.get("message") or "").removesuffix(f" ({t.get('operation')} occurs in "
+                                                    f"{d.get('name')})")
+        out.append(f"  {t.get('operation')}" + (f" at {where}" if where else "") + f": {msg}")
+    out.append("  Whether the hypotheses exclude these cases is for your comparison; the "
+               "assessment's judgement of them comes after your verdict.")
+    return out
+
+
 def expansion_lines(x: dict) -> list[str]:
     """A definition at the arguments of one application (`--query expansion`, a packet's
     `lean.expansions`), for the terminal: the arguments by parameter, then the body there with
@@ -1632,7 +1677,7 @@ def packet_text(pk: dict) -> str:
             head = {"establishes the step": "Lean linked as establishing this step:\n",
                     "formal route used instead": "The different formal route used instead "
                     "(it does not state the step):\n"}.get(d.get("role"), "")
-            out.append(head + "\n".join(statement_lines(d)))
+            out.append(head + "\n".join(statement_lines(d) + totalisation_lines(d)))
         for d in lean.get("candidates") or []:
             out.append("candidate (not confirmed): " + "\n".join(statement_lines(d)))
         for d in lean["definitions"]:

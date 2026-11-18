@@ -14,8 +14,9 @@ count it), so its readings are inert and the marker is left as it is.
 
 With `--markers`, the plan also lists the markers whose declaration no claim uses any more: a
 proposition no clause states, or a definition no claim names that is in no closure of the last
-build's Lean results. With `--write` the markers to retire whole stay in their file, with their
-review text and attributes, as `<!-- retired spec-review: ... -->`, which records no review
+build's Lean results, or whose marker records a reading of a claim the inventory no longer
+has. With `--write` the markers to retire whole stay in their file, with their review text and
+attributes, as `<!-- retired spec-review: ... -->`, which records no review
 (`reviews.RETIRED`). Step markers are left alone.
 
 Earlier versions wrote a marker left with no reading as `source=none`, which other marker
@@ -62,6 +63,7 @@ def plan(inventory: dict, reviews: list, lean: dict | None, markers: bool) -> di
     names = {d for c in inventory.get("claims", []) for cl in c.get("clauses") or []
              for d in [cl.get("spec"), *(cl.get("defs") or [])] if d}
     used = _closure_names(lean) | names if lean is not None else None
+    known = {c["id"] for c in inventory.get("claims", [])}
     readings, whole, left = [], [], []
     for r in reviews:
         if r.target == "step":
@@ -72,6 +74,15 @@ def plan(inventory: dict, reviews: list, lean: dict | None, markers: bool) -> di
         if markers and not users:
             if r.target == "spec":
                 whole.append({**row, "reason": f"no clause states {r.name}"})
+                continue
+            gone = sorted(cid for cid in (r.source or {}) if cid not in known)
+            if gone:
+                # A reading of a passage the inventory no longer has: whether or not a closure
+                # uses the definition, the marker records it, and is retired with it.
+                whole.append({**row, "reason": f"no claim names {r.name}, and it records a "
+                                               f"reading of {', '.join(gone)}, which is not in "
+                                               "the inventory",
+                              "reasons": {cid: f"{cid} is not in the inventory" for cid in gone}})
                 continue
             if used is None:
                 left.append({**row, "reason": "no claim names it, and there is no build to show "
@@ -85,7 +96,6 @@ def plan(inventory: dict, reviews: list, lean: dict | None, markers: bool) -> di
         if not stale:
             continue
         verb = "states" if r.target == "spec" else "names"
-        known = {c["id"] for c in inventory.get("claims", [])}
         reasons = {cid: f"{cid} no longer {verb} {r.name}" if cid in known
                    else f"{cid} is not in the inventory" for cid in stale}
         keep = sorted(set(r.source) - set(stale))
@@ -177,12 +187,14 @@ def repairs(result: dict, inventory: dict, reviews: list, recover) -> dict:
     `source=none` listed with its repair. With the readings `recover` finds, the marker is what
     this version makes of a marker that records them: retired whole when none of them applies
     (in `markers`, with `recovered`), or, for a definition no claim names, whose review reads
-    no passage, given them back (`repairs`). A marker whose readings the history does not show,
+    no passage, given them back (`repairs`), unless one is of a claim the inventory no longer
+    has, which retires it whole. A marker whose readings the history does not show,
     or one of whose readings applies again, is left for the maintainer (`left`), never guessed;
     one retired whole for its declaration alone is retired as it is when they are not shown."""
     out = {**result, "markers": list(result["markers"]), "left": list(result["left"]),
            "repairs": []}
     whole = {(m["file"], m["line"]): m for m in out["markers"]}
+    known = {c["id"] for c in inventory.get("claims", [])}
     for r in reviews:
         if r.target == "step" or r.source != {}:
             continue
@@ -208,6 +220,13 @@ def repairs(result: dict, inventory: dict, reviews: list, recover) -> dict:
         elif users or r.target == "spec":
             out["markers"].append({**row, **found, "reason": f"it records `source=none`: no "
                                    f"passage it read still {verb} {r.name}"})
+        elif any(cid not in known for cid in got):
+            # A reading of a claim the inventory no longer has: retired with it, as a marker
+            # that records it is (`plan`).
+            gone = ", ".join(sorted(cid for cid in got if cid not in known))
+            out["markers"].append({**row, **found, "reason": f"it records `source=none`; no "
+                                   f"claim names {r.name}, and its readings in the history "
+                                   f"include {gone}, which is not in the inventory"})
         else:
             out["repairs"].append({**row, **found, "reason": f"no claim names {r.name}: its "
                                    "review reads no passage, and it is given back the readings "
