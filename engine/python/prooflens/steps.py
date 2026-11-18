@@ -299,7 +299,14 @@ def unit_counts(index_claims: list[dict]) -> dict[str, dict[str, dict[str, int]]
 
 # -- finding proof steps in a LaTeX source (zero configuration) -------------------------------
 
-DISPLAY = re.compile(r"\\begin\{(equation|align|gather|multline|eqnarray|flalign|alignat)\}")
+DISPLAY_ENVS = ("equation", "align", "gather", "multline", "eqnarray", "flalign", "alignat")
+DISPLAY = re.compile(r"\\begin\{(" + "|".join(DISPLAY_ENVS) + r")\}")
+# Environments that number each row: a display of several labelled rows is a step per row.
+ROW_ENVS = {"align", "gather", "eqnarray", "flalign", "alignat"}
+# A macro defined as the opening or closing of a display (`\def\beq{\begin{equation}}`).
+DISPLAY_MACRO = re.compile(
+    r"\\(?:def|(?:re|provide)?newcommand\*?)\s*\{?\\([A-Za-z@]+)\}?\s*\{\s*\\(begin|end)\{("
+    + "|".join(DISPLAY_ENVS) + r")\}\s*\}")
 PROOF = re.compile(r"\\(begin|end)\{proof\}")
 LABEL = re.compile(r"\\label\{([^}]*)\}")
 REF = re.compile(r"\\(?:ref|eqref|cref|Cref|autoref)\{([^}]*)\}")
@@ -339,12 +346,97 @@ def aux_numbers(aux_text: str) -> dict[str, str]:
     return out
 
 
-def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str]) -> list[dict]:
+def display_macros(texts) -> dict[str, tuple[str, str]]:
+    """The macros the source `texts` define as the opening or the closing of a display
+    environment, by name: `(begin|end, environment)`."""
+    out = {}
+    for t in texts:
+        for m in DISPLAY_MACRO.finditer(_uncomment_all(t)):
+            out.setdefault(m.group(1), (m.group(2), m.group(3)))
+    return out
+
+
+def _uncomment_all(text: str) -> str:
+    return "\n".join(_uncomment(l) for l in text.split("\n"))
+
+
+def _opening(text: str, macros: dict[str, tuple[str, str]]):
+    """The first display opened in `text`, as `(environment, start, end, by_macro)`, or None."""
+    found = []
+    d = DISPLAY.search(text)
+    if d:
+        found.append((d.start(), d.group(1), d.end(), False))
+    for name, (op, env) in macros.items():
+        if op == "begin":
+            m = re.search(r"\\" + re.escape(name) + r"(?![A-Za-z@])", text)
+            if m:
+                found.append((m.start(), env, m.end(), True))
+    if not found:
+        return None
+    start, env, end, by_macro = min(found)
+    return env, start, end, by_macro
+
+
+def _closing(env: str, macros: dict[str, tuple[str, str]]) -> re.Pattern:
+    names = [re.escape(n) for n, (op, e) in macros.items() if op == "end" and e == env]
+    return re.compile(r"\\end\{" + env + r"\}"
+                      + "".join(r"|\\" + n + r"(?![A-Za-z@])" for n in names))
+
+
+def _rows(text: str, first_line: int) -> list[dict]:
+    """The rows of a display's body `text` (which starts on line `first_line`): the parts
+    between the row breaks (`\\\\`) outside braces and inner environments, each with the lines
+    it spans (`line`, `end_line`, from its first to its last character that is not a space)
+    and its labels."""
+    rows, depth, inner, start, k = [], 0, 0, 0, 0
+    while k < len(text):
+        ch = text[k]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+        elif text.startswith("\\begin{", k):
+            inner += 1
+        elif text.startswith("\\end{", k):
+            inner -= 1
+        if text.startswith("\\\\", k) and depth == 0 and inner == 0:
+            rows.append((start, k + 2))
+            start = k = k + 2
+            continue
+        k += 2 if ch == "\\" else 1
+    rows.append((start, len(text)))
+    out = []
+    for a, b in rows:
+        part = text[a:b]
+        if not part.strip():
+            continue
+        lead = a + len(part) - len(part.lstrip())
+        tail = a + len(part.rstrip())
+        out.append({"line": first_line + text.count("\n", 0, lead),
+                    "end_line": first_line + text.count("\n", 0, max(lead, tail - 1)),
+                    "labels": LABEL.findall(part)})
+    return out
+
+
+def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str],
+                         macros: dict[str, tuple[str, str]] | None = None,
+                         left: list[dict] | None = None) -> list[dict]:
     """The numbered, labelled displays inside the proofs of one source file: each with its
     label, printed number, opening line, the line its proof opens on, and the label the proof's
-    optional argument refers to (`\\begin{proof}[Proof of Theorem~\\ref{thm:x}]`). A display
-    with several labels, or whose label has no number, is left out: it has no single identity."""
+    optional argument refers to (`\\begin{proof}[Proof of Theorem~\\ref{thm:x}]`). A display is
+    opened by its environment or by a macro defined as its opening (`macros`,
+    `display_macros`). A display with one label is one step. A display of several labelled
+    rows (`ROW_ENVS`) is a step per labelled, numbered row, with the row's lines (`rows`). Each
+    numbered display, or row, left out (several labels, a label with no number, a row on the
+    line of another) is added to `left`, with its label, its line and why."""
+    macros = macros or {}
     out, proof, ref, title = [], None, None, None
+
+    def skip(labels, line, reason):
+        if left is not None and labels:
+            left.append({"label": ", ".join(labels), "file": file, "line": line,
+                         "reason": reason})
+
     i = 0
     while i < len(lines):
         text = _uncomment(lines[i])
@@ -356,20 +448,50 @@ def find_proof_equations(lines: list[str], file: str, numbers: dict[str, str]) -
                 title = _proof_title(text[m.end():])
             else:
                 proof, ref, title = None, None, None
-        d = DISPLAY.search(text)
+        d = _opening(text, macros)
         if proof is not None and d:
-            end = re.compile(r"\\end\{" + d.group(1) + r"\}")
-            j, labels = i, []
+            env, _, opened, by_macro = d
+            end = _closing(env, macros)
+            j, labels, body_text, closed_at = i, [], [], None
             while j < len(lines):
                 body = _uncomment(lines[j])
-                labels += LABEL.findall(body[d.end():] if j == i else body)
-                if end.search(body[d.end():] if j == i else body):
+                part = body[opened:] if j == i else body
+                e = end.search(part)
+                body_text.append(part[:e.start()] if e else part)
+                labels += LABEL.findall(part[:e.start()] if e else part)
+                if e:
+                    closed_at = j
                     break
                 j += 1
+            where = {"file": file, "proof_line": proof, "proof_ref": ref, "proof_title": title}
+            if closed_at is None:
+                i = j + 1
+                continue
             if len(labels) == 1 and labels[0] in numbers:
-                out.append({"label": labels[0], "number": numbers[labels[0]], "file": file,
-                            "line": i + 1, "end_line": j + 1, "proof_line": proof,
-                            "proof_ref": ref, "proof_title": title})
+                out.append({"label": labels[0], "number": numbers[labels[0]], "line": i + 1,
+                            "end_line": j + 1, **where,
+                            **({"env": env, "explicit": True} if by_macro else {})})
+            elif len(labels) > 1 and env in ROW_ENVS:
+                rows = _rows("\n".join(body_text), i + 1)
+                for r in rows:
+                    shared = [x for x in rows if x is not r and x["labels"]
+                              and not (x["end_line"] < r["line"] or r["end_line"] < x["line"])]
+                    if len(r["labels"]) > 1:
+                        skip(r["labels"], r["line"], "the row has several labels")
+                    elif r["labels"] and r["labels"][0] not in numbers:
+                        skip(r["labels"], r["line"], "its label has no printed number")
+                    elif r["labels"] and shared:
+                        skip(r["labels"], r["line"], "its row shares a line with another "
+                                                     "labelled row, so it has no lines of its own")
+                    elif r["labels"]:
+                        out.append({"label": r["labels"][0], "number": numbers[r["labels"][0]],
+                                    "line": r["line"], "end_line": r["end_line"], **where,
+                                    "env": env, "explicit": True, "row": True})
+            elif len(labels) > 1:
+                skip(labels, i + 1, f"it is one {env} display, with one number, and it has "
+                                    "several labels")
+            else:
+                skip(labels, i + 1, "its label has no printed number")
             i = j + 1
             continue
         i += 1
@@ -447,24 +569,30 @@ def proof_parent(statements: list[dict], file: str, proof_line: int, ref: str | 
 
 
 def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
-                numbers: dict[str, str]) -> list[dict]:
+                numbers: dict[str, str], notes: list[str] | None = None) -> list[dict]:
     """The proof equations of the source as claims (`unit: proof-equation`), each under the
-    statement whose proof holds it (`proof_parent`). A step with no such statement is left
-    out."""
-    from .source_regions import RegionError, extract
+    statement whose proof holds it (`resolve_parent`). A step with no such statement is left
+    out. A step that is a row of a display, or a display opened by a macro, is pinned by its
+    own lines. Each numbered display of a proof left out (`find_proof_equations`) is said in
+    `notes`, with its label, its place and why."""
+    from .source_regions import RegionError, extract, tex_sources
     out = []
+    macros = display_macros(tex_sources(snap).values())
     for f in files:
         try:
             lines = (snap / f).read_text(encoding="utf-8", errors="replace").split("\n")
         except OSError:
             continue
         opened = [p["line"] for p in proofs(lines)]
-        for st in find_proof_equations(lines, f, numbers):
+        left: list[dict] = []
+        for st in find_proof_equations(lines, f, numbers, macros, left):
             parent, candidates = resolve_parent(statements, f, st["proof_line"], st["proof_ref"],
                                                 st.get("proof_title"), opened)
             if parent is None and not candidates:
                 continue
             claim = {"location": f"{f}:{st['line']}"}
+            if st.get("explicit"):
+                claim["source_region"] = {"end_line": st["end_line"]}
             try:
                 region = extract(snap, claim).record()
             except (RegionError, OSError, UnicodeError):
@@ -483,9 +611,24 @@ def step_claims(pid: str, statements: list[dict], snap: Path, files: list[str],
                 "scope_reviewed": True, "clauses": [], "tags": [],
                 "unit": "proof-equation", "parent": parent["id"] if parent else None,
                 **({"parent_candidates": [c["id"] for c in candidates]} if candidates else {}),
-                "statement_tex": "\n".join(lines[st["line"] - 1:st["end_line"]]),
+                "statement_tex": _display_tex(lines, st, macros),
                 "context_tex": context_lines(lines, st)})
+        if notes is not None:
+            notes += [f"{x['file']}:{x['line']}: the numbered display {x['label']} in a proof is "
+                      f"not listed as a step: {x['reason']}" for x in left]
     return out
+
+
+def _display_tex(lines: list[str], st: dict, macros: dict[str, tuple[str, str]]) -> str:
+    """The text of a step's display, as the reader typesets it: a row inside its environment,
+    and a display's macros written out (display only; the pin holds the source's lines)."""
+    text = "\n".join(lines[st["line"] - 1:st["end_line"]])
+    if st.get("row"):
+        return f"\\begin{{{st['env']}}}\n{text}\n\\end{{{st['env']}}}"
+    for name, (op, env) in macros.items():
+        text = re.sub(r"\\" + re.escape(name) + r"(?![A-Za-z@])",
+                      lambda _: f"\\{op}{{{env}}}", text)
+    return text
 
 
 # -- proof passages: lines of a proof selected as a step (zero configuration) -----------------
