@@ -89,6 +89,14 @@ def write_spec_site(tmp: Path) -> Path:
     (data / "index.json").write_text(json.dumps(index))
     queue = rq.assurance_queue(index, {"S_prop_p.json": ch}, {}, ["author"])
     (data / "review-queue.json").write_text(json.dumps(queue))
+    # The build's copy of the paper's source, which `review read --context` reads (#666).
+    src = data.parent.parent / "sources" / "S"
+    src.mkdir(parents=True)
+    (src / "main.tex").write_text("\n".join([
+        "\\documentclass{article}", "\\begin{document}", "", "\\section{Synthetic results}", "",
+        "Let $P$ be the synthetic property of natural numbers.", "", "", "", "", "",
+        ch["anchor"]["statement"], "", "The case $n = 0$ is discussed in the next section.",
+        "\\end{document}", ""]))
     return data
 
 
@@ -136,12 +144,24 @@ def test_the_outcome_is_withheld_until_the_verdict_on_every_surface(surface, cap
     texts, snap = surface
     for uid in (UNIT, FIXED_UNIT):
         shown = [step(capsys, "read", uid, "--json", *snap).out, step(capsys, "read", uid, *snap).out]
+        # The paper around the passage, on request (#666), is the paper's alone.
+        shown += [step(capsys, "read", uid, "--context", *snap).out,
+                  step(capsys, "read", uid, "--context", "--json", *snap).out]
         step(capsys, "lock", uid, str(texts / "reading.md"), *snap)
         shown += [step(capsys, "show", uid, "--json", *snap).out,
                   step(capsys, "show", uid, *snap).out,
                   step(capsys, "show", uid, "--definitions", *snap).out]
         for text in shown:
             withheld(text)
+        around = json.loads(shown[3])["paper"]["passages"][0]["surroundings"]
+        # A review of the project's build reads its copy of the source; a snapshot has none.
+        assert around["available"] == Path(".machinechecked/sources/S").is_dir(), around
+        if around["available"]:
+            assert around["before"]["text"] == "Let $P$ be the synthetic property of natural " \
+                "numbers." and "Its context in the paper" in shown[2]
+        else:
+            assert "a review snapshot holds the passages" in around["reason"]
+        shown = shown[:2] + shown[4:] + shown[2:4]
         pk = json.loads(shown[2])
         d, = pk["lean"]["declarations"]
         # The statement as Lean gives it, named by its place among its claim's clauses, with

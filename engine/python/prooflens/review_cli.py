@@ -626,7 +626,9 @@ class Session:
             raise ReviewError(f"{uid}: the reading is already locked", "order")
         return d, self.revealed_by(u)
 
-    def read(self, uid: str, as_json: bool = False) -> str | dict:
+    def read(self, uid: str, as_json: bool = False, context: bool = False) -> str | dict:
+        """Step 1: the unit's passages; with `context`, each with the paper around it
+        (`with_context`)."""
         u = self.unit(uid)
         _, seen = self.begin(uid)
         warn = ("\n\nNOTE: you have already seen " + " and ".join(
@@ -635,11 +637,30 @@ class Session:
         reveals = self.would_reveal(u)
         if reveals:
             warn += "\n\n" + reveals_note(reveals, "Step 2 of this unit (`review show`) will show")
+        pk = self.packet(u, "read")
+        if context:
+            self.with_context(pk)
         if as_json:
-            return {**self.packet(u, "read"), "review": {"step": "read", "mode": self.mode,
-                                                         "seen_before": seen,
-                                                         "reveals": reveals}}
-        return self.paper_text(u) + warn
+            return {**pk, "review": {"step": "read", "mode": self.mode, "seen_before": seen,
+                                     "reveals": reveals}}
+        return cmp.packet_text(pk) + warn
+
+    def with_context(self, pk: dict) -> dict:
+        """The read step's packet `pk` with, on each passage, the paper around it
+        (`surroundings`, `passage_context.py`), read from the build's copy of the paper's
+        source. A review snapshot holds the passages only, so a review of one has none."""
+        from .passage_context import surroundings
+        chunks = [ch for ch in (self.site.chunk(p["claim"]) for p in pk["paper"]["passages"])
+                  if ch is not None]
+        got = surroundings(self.site, chunks, self.work_dir / "sources", self.work_dir / "build",
+                           "a review snapshot holds the passages the steps show, not the rest "
+                           "of the paper's source: read their context in the paper"
+                           if self.evidence else None)
+        for p in pk["paper"]["passages"]:
+            if p["claim"] in got:
+                p["surroundings"] = got[p["claim"]]
+        pk["paper"]["context"] = "requested"
+        return pk
 
     def _started(self, u: dict) -> dict:
         """An informed session's draft of `u`, begun now if there is none: its steps need no
