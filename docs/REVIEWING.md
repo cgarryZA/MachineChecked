@@ -167,7 +167,11 @@ text comes from (the LaTeX source, or text extracted from the PDF) and whether i
 exact or approximate (approximate for a PDF's statements and for proof steps located by their
 line). A passage the build does not hold is marked UNAVAILABLE with its source reference, and
 PDF text cut by the extraction is marked INCOMPLETE: read those in the paper. The paper's
-`\lean{...}` tags are removed from the reading, since they name declarations.
+`\lean{...}` tags are removed from the reading, since they name declarations. A claim cut from a
+longer passage (one display of a remark, one sentence of a paragraph) is marked: `read` prints
+first the lines the unit states, its own pinned region, then the whole passage as context (in
+JSON, `states`: its `file`, `start_line`, `end_line` and `text`). The mark is the claim's pin
+alone, never a clause's name.
 
 `read UNIT --context` gives each passage with the paper around it, read from the build's copy of
 the paper's source: the headings of the sections that enclose it, the paragraph just before it
