@@ -4241,6 +4241,35 @@ print(json.dumps(wsp.read(p)))`);
       } finally { await pg2.close(); }
     });
 
+    // A reading choice of the toy's definition of evenness, saved from the terminal, and a
+    // requirement of the theorem on even sums that cites it: the theorem's investigation shows the
+    // choice and the dependence, in the engine's words (#597).
+    await check("a reading choice is shown on the claims that depend on it", 1300, async (pg) => {
+      engine(String.raw`
+import sys
+from pathlib import Path
+from prooflens import workspace as wsp
+from prooflens.targets import Snapshot
+(p, ws), = wsp.list_all(Path(sys.argv[1]))
+s = Snapshot(Path(sys.argv[1]).parent / "toyws" / "data")
+wsp.update(p, [{"op": "put", "record": {"kind": "requirement", "claim": "T:def:even", "local_id": "even", "form": "reading choice", "text": "what even means", "readings": [{"id": "two", "text": "n = 2k for some k"}, {"id": "mod", "text": "n mod 2 = 0"}], "chosen": "two", "reason": "The paper writes n = 2k.", "equivalence": {"theorem": "Toy.even_iff_mod", "readings": ["two", "mod"]}}},
+               {"op": "put", "record": {"kind": "requirement", "claim": "T:thm:even-add", "local_id": "rc", "form": "assumption", "text": "m and n are even", "reading_choices": [{"claim": "T:def:even", "choice": "even"}]}}], s)
+print("null")`);
+      await pg.goto(claimUrl);
+      const inv = pg.locator("section.investigation");
+      await inv.getByRole("button", { name: /^Continue ws-/ }).click();
+      const choice = inv.locator(".choices [data-choice=even]");
+      await choice.waitFor();
+      assert.equal(await choice.getAttribute("data-equivalence"), "pending");
+      const text = (await choice.textContent()).replace(/\s+/g, " ").trim();
+      assert.match(text, /^reading choice even of T:def:even \(what even means\): two, n = 2k for some k\. Reason: The paper writes n = 2k\./);
+      assert.match(text, /not chosen: mod, n mod 2 = 0/);
+      assert.match(text, /equivalence of readings two and mod: pending Toy\.even_iff_mod/);
+      assert.match(text, /depended on by T:thm:even-add, requirement rc/);
+      assert.match(await inv.locator("[data-req=rc] .cite").textContent(),
+        /depends on the reading of T:def:even chosen in even: two, n = 2k for some k; pending Toy\.even_iff_mod/);
+    });
+
     // A requirement of Theorem 2.2 with its source: the sentence that sets the quantifier's
     // domain is suggested from the paper's source, accepted, and a wrong suggestion removed
     // with its reason; a later use and an alignment saved from the terminal are shown apart.
